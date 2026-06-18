@@ -1,0 +1,48 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  body {
+    @apply bg-gray-50 text-gray-900 font-sans;
+  }
+  .font-tamil {
+    font-family: 'Noto Sans Tamil', serif;
+  }
+}
+
+@layer components {
+  .btn-primary {
+    @apply bg-primary-800 hover:bg-primary-900 text-white font-semibold px-4 py-2 rounded-lg transition-colors duration-200 disabled:opacity-50 disabled:cursor-not-allowed;
+  }
+  .btn-secondary {
+    @apply bg-white hover:bg-gray-50 text-primary-800 font-semibold px-4 py-2 rounded-lg border border-primary-800 transition-colors duration-200;
+  }
+  .btn-danger {
+    @apply bg-red-600 hover:bg-red-700 text-white font-semibold px-4 py-2 rounded-lg transition-colors duration-200;
+  }
+  .input {
+    @apply w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent;
+  }
+  .card {
+    @apply bg-white rounded-xl shadow-sm border border-gray-100 p-5;
+  }
+  .badge-beginner {
+    @apply text-xs px-2 py-0.5 rounded-full bg-green-100 text-green-800 font-medium;
+  }
+  .badge-intermediate {
+    @apply text-xs px-2 py-0.5 rounded-full bg-yellow-100 text-yellow-800 font-medium;
+  }
+  .badge-advanced {
+    @apply text-xs px-2 py-0.5 rounded-full bg-red-100 text-red-800 font-medium;
+  }
+}
+
+/* ── VIEWER PROTECTION ─────────────────────────────────────────────────────── */
+.viewer-container {
+  user-select: none;
+  -webkit-user-select: none;
+}
+@media print {
+  .viewer-container, body { display: none !important; }
+}
