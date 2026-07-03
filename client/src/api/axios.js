@@ -1,7 +1,14 @@
 import axios from 'axios';
 
+// In development, Vite's proxy forwards /api to localhost:3000 — so a relative
+// baseURL works. In production (Cloudflare Pages), the frontend and backend are
+// on different domains, so we need the full backend URL from an env var.
+const API_BASE = import.meta.env.VITE_API_URL
+  ? `${import.meta.env.VITE_API_URL}/api/v1`
+  : '/api/v1';
+
 const api = axios.create({
-  baseURL: '/api/v1',
+  baseURL: API_BASE,
   withCredentials: true,
   headers: { 'Content-Type': 'application/json' },
 });
