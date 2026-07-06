@@ -15,6 +15,7 @@ const quizRoutes = require('./routes/quizzes');
 const { errorHandler } = require('./middleware/errorHandler');
 
 const app = express();
+app.set('trust proxy', 1); // trust Bonto's reverse proxy so req.ip reflects the real client IP
 
 // ── SECURITY ──────────────────────────────────────────────────────────────────
 app.use(helmet({
@@ -42,6 +43,8 @@ app.use(cors({
 // ── BODY PARSING ──────────────────────────────────────────────────────────────
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true }));
+
+app.set('trust proxy', 1);
 
 // ── GLOBAL RATE LIMIT ─────────────────────────────────────────────────────────
 app.use(rateLimit({
