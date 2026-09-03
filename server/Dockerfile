@@ -1,6 +1,9 @@
-# ── Build stage ──────────────────────────────────────────────────────────────
-FROM node:20-alpine AS build
+# ── Build stage ──────────────────────────────────────────────
+FROM node:22-alpine AS build
 WORKDIR /app
+
+# Prisma's engine needs OpenSSL to detect the correct binary target
+RUN apk add --no-cache openssl
 
 # Install dependencies first (better layer caching)
 COPY package*.json ./
@@ -10,9 +13,12 @@ RUN npm install --omit=dev
 COPY . .
 RUN npx prisma generate
 
-# ── Production stage ─────────────────────────────────────────────────────────
-FROM node:20-alpine AS production
+# ── Production stage ─────────────────────────────────────────
+FROM node:22-alpine AS production
 WORKDIR /app
+
+# Prisma's engine needs OpenSSL at runtime too
+RUN apk add --no-cache openssl
 
 ENV NODE_ENV=production
 
