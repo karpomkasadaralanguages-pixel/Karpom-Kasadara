@@ -9,8 +9,9 @@ const { requireAuth } = require('../middleware/auth');
 const { sendInviteEmail, sendPasswordResetEmail } = require('../services/email');
 
 // ── RATE LIMITERS ─────────────────────────────────────────────────────────────
-const loginLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 5,
-  message: { error: { code: 'RATE_LIMIT', message: 'Too many login attempts. Try again in 15 minutes.' } } });
+// Login attempts are intentionally unlimited — no lockout, no wait timer.
+// (Note: the global rate limiter in index.js, 300 req/min per IP, still applies
+// as a basic anti-flood safety net, but nothing login-specific blocks retries.)
 const resetLimiter = rateLimit({ windowMs: 60 * 60 * 1000, max: 3,
   message: { error: { code: 'RATE_LIMIT', message: 'Too many reset requests. Try again in an hour.' } } });
 
@@ -31,7 +32,7 @@ async function generateRefreshToken(userId) {
 }
 
 // ── POST /login ───────────────────────────────────────────────────────────────
-router.post('/login', loginLimiter, async (req, res, next) => {
+router.post('/login', async (req, res, next) => {
   try {
     const { email, password } = z.object({
       email: z.string().email(),
