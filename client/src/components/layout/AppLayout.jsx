@@ -8,6 +8,7 @@ const NAV = {
     { to: '/content',             label: 'Content Library', tamil: 'உள்ளடக்கம்',    icon: '📚' },
     { to: '/admin/users',         label: 'Users',           tamil: 'பயனர்கள்',      icon: '👥' },
     { to: '/admin/announcements', label: 'Announcements',   tamil: 'அறிவிப்புகள்',  icon: '📢' },
+    { to: '/admin/inquiries',     label: 'Inquiries',       tamil: 'விசாரணைகள்',    icon: '✉️' },
     { to: '/profile',             label: 'Profile',         tamil: 'சுயவிவரம்',     icon: '👤' },
   ],
   teacher: [

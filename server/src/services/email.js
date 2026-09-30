@@ -55,4 +55,29 @@ async function sendPasswordResetEmail({ to, fullName, resetUrl }) {
   });
 }
 
-module.exports = { sendInviteEmail, sendPasswordResetEmail };
+async function sendInquiryNotificationEmail({ name, email, phone, message }) {
+  const ADMIN_INBOX = process.env.INQUIRY_NOTIFY_EMAIL || 'karpomkasadaralanguages@gmail.com';
+  await resend.emails.send({
+    from: FROM,
+    to: ADMIN_INBOX,
+    replyTo: email,
+    subject: `New inquiry from ${name}`,
+    html: `
+      <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+        <div style="background: #1B5E20; padding: 24px; text-align: center;">
+          <h1 style="color: white; margin: 0; font-size: 24px;">கற்போம் கசடற</h1>
+          <p style="color: #A5D6A7; margin: 4px 0 0;">New Website Inquiry</p>
+        </div>
+        <div style="padding: 32px; background: #f9f9f9;">
+          <p style="font-size: 16px; color: #333;"><strong>Name:</strong> ${name}</p>
+          <p style="font-size: 16px; color: #333;"><strong>Email:</strong> ${email}</p>
+          ${phone ? `<p style="font-size: 16px; color: #333;"><strong>Phone:</strong> ${phone}</p>` : ''}
+          <p style="font-size: 16px; color: #333; margin-top: 16px;"><strong>Message:</strong></p>
+          <p style="font-size: 16px; color: #555; white-space: pre-wrap;">${message}</p>
+        </div>
+      </div>
+    `,
+  });
+}
+
+module.exports = { sendInviteEmail, sendPasswordResetEmail, sendInquiryNotificationEmail };

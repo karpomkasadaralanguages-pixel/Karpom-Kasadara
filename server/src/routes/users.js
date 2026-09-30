@@ -13,7 +13,7 @@ router.get('/', requireAuth, requireRole('admin'), async (req, res, next) => {
 
     const users = await prisma.user.findMany({
       where,
-      select: { id: true, role: true, fullName: true, email: true, status: true, createdAt: true, lastLoginAt: true, age: true, parentPhone: true },
+      select: { id: true, role: true, fullName: true, email: true, status: true, createdAt: true, lastLoginAt: true, age: true, parentPhone: true, classLevel: true },
       orderBy: { createdAt: 'desc' },
       take: parseInt(limit),
       ...(cursor && { cursor: { id: cursor }, skip: 1 }),
@@ -33,6 +33,7 @@ router.post('/', requireAuth, requireRole('admin'), async (req, res, next) => {
       password: z.string().min(8),
       age: z.number().int().optional(),
       parentPhone: z.string().optional(),
+      classLevel: z.enum(['kg', 'class_1', 'class_2', 'class_3', 'class_4', 'class_5', 'class_6', 'class_7', 'class_8']).optional(),
     }).parse(req.body);
 
     const existing = await prisma.user.findUnique({ where: { email: data.email.toLowerCase() } });
@@ -41,7 +42,7 @@ router.post('/', requireAuth, requireRole('admin'), async (req, res, next) => {
     const passwordHash = await bcrypt.hash(data.password, 12);
     const user = await prisma.user.create({
       data: { ...data, email: data.email.toLowerCase(), passwordHash, password: undefined },
-      select: { id: true, role: true, fullName: true, email: true, createdAt: true }
+      select: { id: true, role: true, fullName: true, email: true, createdAt: true, classLevel: true }
     });
 
     res.status(201).json({ user });
@@ -60,7 +61,7 @@ router.get('/:id', requireAuth, async (req, res, next) => {
 
     const user = await prisma.user.findUnique({
       where: { id: req.params.id, deletedAt: null },
-      select: { id: true, role: true, fullName: true, email: true, status: true, age: true, parentPhone: true, createdAt: true, lastLoginAt: true }
+      select: { id: true, role: true, fullName: true, email: true, status: true, age: true, parentPhone: true, classLevel: true, createdAt: true, lastLoginAt: true }
     });
     if (!user) return res.status(404).json({ error: { code: 'NOT_FOUND', message: 'User not found.' } });
 
@@ -77,18 +78,27 @@ router.patch('/:id', requireAuth, async (req, res, next) => {
 
     const data = z.object({
       fullName: z.string().min(2).max(255).optional(),
-      age: z.number().int().optional(),
-      parentPhone: z.string().optional(),
+      // Accept '', null, or a number for age — empty string means "leave unchanged"
+      age: z.union([z.number().int(), z.literal(''), z.null()]).optional()
+        .transform(v => (v === '' || v === null || v === undefined ? undefined : v)),
+      parentPhone: z.union([z.string(), z.null()]).optional()
+        .transform(v => (v === null ? undefined : v)),
+      classLevel: z.union([
+        z.enum(['kg', 'class_1', 'class_2', 'class_3', 'class_4', 'class_5', 'class_6', 'class_7', 'class_8']),
+        z.literal(''), z.null()
+      ]).optional().transform(v => (v === '' || v === null ? null : v)),
       status: z.enum(['active', 'suspended']).optional(),
     }).parse(req.body);
 
     // Only admin can change status
     if (data.status && req.user.role !== 'admin') delete data.status;
+    // Strip undefined keys so they aren't sent to Prisma at all
+    Object.keys(data).forEach(k => data[k] === undefined && delete data[k]);
 
     const user = await prisma.user.update({
       where: { id: req.params.id },
       data,
-      select: { id: true, role: true, fullName: true, email: true, status: true }
+      select: { id: true, role: true, fullName: true, email: true, status: true, age: true, parentPhone: true, classLevel: true }
     });
 
     res.json({ user });

@@ -6,10 +6,13 @@ import useAuthStore from './store/authStore';
 import AppLayout from './components/layout/AppLayout';
 
 // Pages
+import CoverPage from './pages/CoverPage';
 import LoginPage from './pages/LoginPage';
 import RegisterPage from './pages/RegisterPage';
 import ForgotPasswordPage from './pages/ForgotPasswordPage';
 import ResetPasswordPage from './pages/ResetPasswordPage';
+import InquiryPage from './pages/InquiryPage';
+import AdminInquiriesPage from './pages/AdminInquiriesPage';
 import DashboardPage from './pages/DashboardPage';
 import ContentLibraryPage from './pages/ContentLibraryPage';
 import ViewerPage from './pages/ViewerPage';
@@ -29,6 +32,12 @@ function RequireRole({ roles, children }) {
   const { user } = useAuthStore();
   if (!user || !roles.includes(user.role)) return <Navigate to="/dashboard" replace />;
   return children;
+}
+
+function RootRoute({ children }) {
+  const { isAuthenticated, isLoading } = useAuthStore();
+  if (isLoading) return <div className="min-h-screen flex items-center justify-center"><Spinner /></div>;
+  return isAuthenticated ? children : <CoverPage />;
 }
 
 function Spinner() {
@@ -66,9 +75,11 @@ export default function App() {
         <Route path="/register" element={<RegisterPage />} />
         <Route path="/forgot-password" element={<ForgotPasswordPage />} />
         <Route path="/reset-password" element={<ResetPasswordPage />} />
+        <Route path="/inquiry" element={<InquiryPage />} />
 
-        {/* Protected */}
-        <Route path="/" element={<RequireAuth><AppLayout /></RequireAuth>}>
+        {/* Protected — "/" shows the public cover page when logged out,
+            and the full app (dashboard etc.) when logged in */}
+        <Route path="/" element={<RootRoute><AppLayout /></RootRoute>}>
           <Route index element={<Navigate to="/dashboard" replace />} />
           <Route path="dashboard" element={<DashboardPage />} />
           <Route path="content" element={<ContentLibraryPage />} />
@@ -86,6 +97,9 @@ export default function App() {
           } />
           <Route path="admin/announcements" element={
             <RequireRole roles={['admin']}><AdminAnnouncementsPage /></RequireRole>
+          } />
+          <Route path="admin/inquiries" element={
+            <RequireRole roles={['admin']}><AdminInquiriesPage /></RequireRole>
           } />
         </Route>
 

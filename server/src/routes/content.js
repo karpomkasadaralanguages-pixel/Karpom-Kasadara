@@ -22,21 +22,30 @@ const upload = multer({
 // ── GET /content — list content visible to user ───────────────────────────────
 router.get('/', requireAuth, async (req, res, next) => {
   try {
-    const { category, difficulty, sort = 'recent', cursor, limit = 20 } = req.query;
+    const { category, difficulty, classLevel, contentType, sort = 'recent', cursor, limit = 20 } = req.query;
     const where = { deletedAt: null, status: 'ready' };
 
     if (req.user.role === 'student') {
       const assignments = await prisma.contentAssignment.findMany({ where: { studentId: req.user.id }, select: { contentId: true } });
       where.id = { in: assignments.map(a => a.contentId) };
+      // Teaching guides are never visible to students, even if directly assigned
+      where.contentType = { not: 'teaching_guide' };
     } else if (req.user.role === 'teacher') {
+      const shares = await prisma.contentTeacherShare.findMany({ where: { teacherId: req.user.id }, select: { contentId: true } });
       where.OR = [
         { uploadedById: req.user.id },
-        { isShared: true }
+        { isShared: true },
+        { id: { in: shares.map(s => s.contentId) } }
       ];
     }
 
     if (category) where.category = category;
     if (difficulty) where.difficulty = difficulty;
+    if (classLevel) where.classLevel = classLevel;
+    if (contentType) {
+      // Don't let a student override the teaching_guide exclusion via query param
+      if (!(req.user.role === 'student' && contentType === 'teaching_guide')) where.contentType = contentType;
+    }
 
     const orderBy = sort === 'alpha' ? { title: 'asc' } : { createdAt: 'desc' };
 
@@ -44,6 +53,7 @@ router.get('/', requireAuth, async (req, res, next) => {
       where,
       select: {
         id: true, title: true, category: true, difficulty: true,
+        classLevel: true, contentType: true,
         originalFormat: true, pageCount: true, isShared: true,
         status: true, createdAt: true,
         uploadedBy: { select: { id: true, fullName: true } }
@@ -76,6 +86,8 @@ router.post('/', requireAuth, requireRole('admin', 'teacher'), upload.single('fi
       title: z.string().min(1).max(255),
       category: z.string().min(1).max(100),
       difficulty: z.enum(['beginner', 'intermediate', 'advanced']),
+      classLevel: z.enum(['kg', 'class_1', 'class_2', 'class_3', 'class_4', 'class_5', 'class_6', 'class_7', 'class_8']),
+      contentType: z.enum(['book', 'workbook', 'worksheet', 'question_paper', 'teaching_guide']),
       isShared: z.string().optional().transform(v => v === 'true'),
     }).parse(req.body);
 
@@ -107,6 +119,8 @@ router.post('/', requireAuth, requireRole('admin', 'teacher'), upload.single('fi
         title: meta.title,
         category: meta.category,
         difficulty: meta.difficulty,
+        classLevel: meta.classLevel,
+        contentType: meta.contentType,
         originalFormat,
         rawStoragePath: rawPath,
         pdfStoragePath: isPdf ? rawPath : null,
@@ -164,12 +178,18 @@ router.get('/:id', requireAuth, requireAssignment, async (req, res, next) => {
       where: { id: req.params.id, deletedAt: null },
       select: {
         id: true, title: true, category: true, difficulty: true,
+        classLevel: true, contentType: true,
         originalFormat: true, pageCount: true, isShared: true,
         status: true, createdAt: true, fileSizeBytes: true,
-        uploadedBy: { select: { id: true, fullName: true } }
+        uploadedBy: { select: { id: true, fullName: true } },
+        teacherShares: { select: { teacherId: true } }
       }
     });
     if (!content) return res.status(404).json({ error: { code: 'NOT_FOUND', message: 'Content not found.' } });
+    // Teaching guides are never visible to students, regardless of assignment
+    if (content.contentType === 'teaching_guide' && req.user.role === 'student') {
+      return res.status(404).json({ error: { code: 'NOT_FOUND', message: 'Content not found.' } });
+    }
     res.json({ content });
   } catch (err) { next(err); }
 });
@@ -181,16 +201,59 @@ router.patch('/:id', requireAuth, requireContentOwnership, async (req, res, next
       title: z.string().min(1).max(255).optional(),
       category: z.string().min(1).max(100).optional(),
       difficulty: z.enum(['beginner', 'intermediate', 'advanced']).optional(),
+      classLevel: z.enum(['kg', 'class_1', 'class_2', 'class_3', 'class_4', 'class_5', 'class_6', 'class_7', 'class_8']).optional(),
+      contentType: z.enum(['book', 'workbook', 'worksheet', 'question_paper', 'teaching_guide']).optional(),
       isShared: z.boolean().optional(),
     }).parse(req.body);
 
     const content = await prisma.content.update({
       where: { id: req.params.id },
       data,
-      select: { id: true, title: true, category: true, difficulty: true, isShared: true }
+      select: { id: true, title: true, category: true, difficulty: true, classLevel: true, contentType: true, isShared: true }
     });
 
     res.json({ content });
+  } catch (err) {
+    if (err.name === 'ZodError') return res.status(400).json({ error: { code: 'VALIDATION', message: err.errors[0].message } });
+    next(err);
+  }
+});
+
+// ── GET /content/:id/assignments — students currently assigned (teacher/admin) ─
+router.get('/:id/assignments', requireAuth, requireRole('admin', 'teacher'), async (req, res, next) => {
+  try {
+    const assignments = await prisma.contentAssignment.findMany({
+      where: { contentId: req.params.id },
+      select: { studentId: true }
+    });
+    res.json({ studentIds: assignments.map(a => a.studentId) });
+  } catch (err) { next(err); }
+});
+
+// ── GET /content/:id/shares — which teachers this is shared with (admin only) ──
+router.get('/:id/shares', requireAuth, requireRole('admin'), async (req, res, next) => {
+  try {
+    const shares = await prisma.contentTeacherShare.findMany({
+      where: { contentId: req.params.id },
+      select: { teacherId: true }
+    });
+    res.json({ teacherIds: shares.map(s => s.teacherId) });
+  } catch (err) { next(err); }
+});
+
+// ── PUT /content/:id/shares — set the full list of teachers this is shared with (admin only) ──
+router.put('/:id/shares', requireAuth, requireRole('admin'), async (req, res, next) => {
+  try {
+    const { teacherIds } = z.object({ teacherIds: z.array(z.string().uuid()) }).parse(req.body);
+
+    await prisma.$transaction([
+      prisma.contentTeacherShare.deleteMany({ where: { contentId: req.params.id } }),
+      ...teacherIds.map(teacherId => prisma.contentTeacherShare.create({
+        data: { contentId: req.params.id, teacherId }
+      }))
+    ]);
+
+    res.json({ message: `Shared with ${teacherIds.length} teacher(s).` });
   } catch (err) {
     if (err.name === 'ZodError') return res.status(400).json({ error: { code: 'VALIDATION', message: err.errors[0].message } });
     next(err);

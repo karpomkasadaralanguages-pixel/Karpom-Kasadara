@@ -43,6 +43,26 @@ enum UserStatus {
   suspended
 }
 
+enum ClassLevel {
+  kg
+  class_1
+  class_2
+  class_3
+  class_4
+  class_5
+  class_6
+  class_7
+  class_8
+}
+
+enum ContentType {
+  book
+  workbook
+  worksheet
+  question_paper
+  teaching_guide
+}
+
 model User {
   id           String     @id @default(uuid())
   role         Role
@@ -51,6 +71,7 @@ model User {
   passwordHash String     @map("password_hash")
   age          Int?
   parentPhone  String?    @map("parent_phone")
+  classLevel   ClassLevel? @map("class_level")
   status       UserStatus @default(active)
   invitedById  String?    @map("invited_by")
   createdAt    DateTime   @default(now()) @map("created_at")
@@ -71,6 +92,7 @@ model User {
   quizAttempts     QuizAttempt[]
   refreshTokens    RefreshToken[]
   passwordResets   PasswordReset[]
+  contentSharedWithMe ContentTeacherShare[] @relation("ContentSharedWithTeacher")
 
   @@map("users")
 }
@@ -106,6 +128,8 @@ model Content {
   title            String
   category         String
   difficulty       Difficulty
+  classLevel       ClassLevel?    @map("class_level")
+  contentType      ContentType?   @map("content_type")
   originalFormat   OriginalFormat @map("original_format")
   rawStoragePath   String         @map("raw_storage_path")
   pdfStoragePath   String?        @map("pdf_storage_path")
@@ -116,14 +140,40 @@ model Content {
   createdAt        DateTime       @default(now()) @map("created_at")
   deletedAt        DateTime?      @map("deleted_at")
 
-  uploadedBy   User                @relation("UploadedBy", fields: [uploadedById], references: [id])
-  assignments  ContentAssignment[]
-  progress     Progress[]
-  bookmarks    Bookmark[]
-  notes        Note[]
-  quizzes      Quiz[]
+  uploadedBy    User                 @relation("UploadedBy", fields: [uploadedById], references: [id])
+  assignments   ContentAssignment[]
+  teacherShares ContentTeacherShare[]
+  progress      Progress[]
+  bookmarks     Bookmark[]
+  notes         Note[]
+  quizzes       Quiz[]
 
   @@map("content")
+}
+
+model ContentTeacherShare {
+  id        String   @id @default(uuid())
+  contentId String   @map("content_id")
+  teacherId String   @map("teacher_id")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  content Content @relation(fields: [contentId], references: [id], onDelete: Cascade)
+  teacher User    @relation("ContentSharedWithTeacher", fields: [teacherId], references: [id], onDelete: Cascade)
+
+  @@unique([contentId, teacherId])
+  @@map("content_teacher_shares")
+}
+
+model Inquiry {
+  id        String   @id @default(uuid())
+  name      String
+  email     String
+  phone     String?
+  message   String
+  isRead    Boolean  @default(false) @map("is_read")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@map("inquiries")
 }
 
 model ContentAssignment {

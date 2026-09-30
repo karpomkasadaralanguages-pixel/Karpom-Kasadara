@@ -36,6 +36,8 @@ const useAuthStore = create((set, get) => ({
   },
 
   setLoading: (isLoading) => set({ isLoading }),
+
+  updateUser: (partialUser) => set(state => ({ user: { ...state.user, ...partialUser } })),
 }));
 
 export default useAuthStore;
