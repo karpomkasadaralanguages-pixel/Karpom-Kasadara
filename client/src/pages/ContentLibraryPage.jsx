@@ -15,12 +15,16 @@ const CONTENT_TYPES = [
 ];
 const CONTENT_TYPE_LABEL = Object.fromEntries(CONTENT_TYPES.map(c => [c.value, c.label]));
 const CLASS_LABEL = Object.fromEntries(CLASS_LEVELS.map(c => [c.value, c.label]));
+// Content types a student fills in and hands back — books and teaching
+// guides are read-only, so "Submit" only makes sense for these.
+const SUBMITTABLE_TYPES = ['workbook', 'worksheet', 'question_paper'];
 
-function ContentCard({ item, onDelete, onShare, onOpenTeacherShare, onOpenAssign, onOpenSetMeta }) {
+function ContentCard({ item, onDelete, onShare, onOpenTeacherShare, onOpenAssign, onOpenSetMeta, onOpenSubmit, onOpenSubmissions }) {
   const { user } = useAuthStore();
   const canEdit = user.role === 'admin' || (user.role === 'teacher' && item.uploadedBy?.id === user.id);
   const needsMeta = !item.classLevel || !item.contentType;
   const isTeacherOrAdmin = user.role === 'admin' || user.role === 'teacher';
+  const isSubmittable = SUBMITTABLE_TYPES.includes(item.contentType);
 
   return (
     <div className="card hover:shadow-md transition-shadow">
@@ -49,6 +53,20 @@ function ContentCard({ item, onDelete, onShare, onOpenTeacherShare, onOpenAssign
             <Link to={`/content/${item.id}/view`} className="btn-primary text-xs py-1.5 px-3">
               <span className="font-tamil">காண்</span> / View
             </Link>
+          )}
+          {item.status === 'ready' && user.role === 'student' && isSubmittable && (
+            <button onClick={() => onOpenSubmit(item)} className="btn-secondary text-xs py-1.5 px-3">
+              📤 Submit
+            </button>
+          )}
+          {isTeacherOrAdmin && isSubmittable && (
+            <button
+              onClick={() => onOpenSubmissions(item)}
+              title="View student submissions"
+              className="p-1.5 rounded-md text-gray-400 hover:text-blue-700 hover:bg-blue-50 transition-colors"
+            >
+              📥
+            </button>
           )}
           {user.role === 'teacher' && (
             <button
@@ -245,6 +263,192 @@ function AssignModal({ item, onClose }) {
   );
 }
 
+// ── STUDENT: SUBMIT COMPLETED WORK ─────────────────────────────────────────────
+function SubmitWorkModal({ item, onClose }) {
+  const [loading, setLoading] = useState(true);
+  const [submission, setSubmission] = useState(null);
+  const [file, setFile] = useState(null);
+  const [uploading, setUploading] = useState(false);
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    api.get(`/content/${item.id}/submission`)
+      .then(({ data }) => setSubmission(data.submission))
+      .catch(() => {})
+      .finally(() => setLoading(false));
+  }, [item.id]);
+
+  const handleSubmit = async e => {
+    e.preventDefault();
+    if (!file) { setError('Please choose a photo or PDF of your completed work.'); return; }
+    setUploading(true); setError('');
+    try {
+      const fd = new FormData();
+      fd.append('file', file);
+      const { data } = await api.post(`/content/${item.id}/submit`, fd, { headers: { 'Content-Type': 'multipart/form-data' } });
+      setSubmission(data.submission);
+      setFile(null);
+    } catch (err) {
+      setError(err.response?.data?.error?.message || 'Submission failed.');
+    } finally { setUploading(false); }
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 px-4">
+      <div className="bg-white rounded-xl shadow-xl w-full max-w-md">
+        <div className="flex items-center justify-between p-5 border-b border-gray-100">
+          <h2 className="font-semibold text-gray-800">Submit — {item.title}</h2>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-600 text-xl">×</button>
+        </div>
+        <div className="p-5 space-y-4">
+          {loading ? (
+            <div className="text-center py-6 text-gray-400">Loading...</div>
+          ) : (
+            <>
+              {submission && (
+                <div className={`p-3 rounded-lg text-sm border ${
+                  submission.status === 'reviewed' ? 'bg-green-50 border-green-200 text-green-800' : 'bg-blue-50 border-blue-200 text-blue-800'
+                }`}>
+                  <div className="font-medium">
+                    {submission.status === 'reviewed' ? '✅ Reviewed by your teacher' : '📤 Submitted — waiting for review'}
+                  </div>
+                  <div className="text-xs mt-1 opacity-80">
+                    {submission.fileName} · {new Date(submission.submittedAt).toLocaleString()}
+                  </div>
+                  {submission.teacherComment && (
+                    <div className="text-xs mt-2 pt-2 border-t border-current border-opacity-20">
+                      <span className="font-medium">Teacher's note:</span> {submission.teacherComment}
+                    </div>
+                  )}
+                </div>
+              )}
+              {error && <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700">{error}</div>}
+              <form onSubmit={handleSubmit} className="space-y-3">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    {submission ? 'Replace with a new file' : 'Photo or PDF of your completed work'}
+                  </label>
+                  <input
+                    type="file" accept=".pdf,image/*"
+                    onChange={e => setFile(e.target.files[0])}
+                    className="block w-full text-sm text-gray-600 file:mr-3 file:py-1.5 file:px-3 file:rounded-md file:border-0 file:text-sm file:bg-primary-50 file:text-primary-800 hover:file:bg-primary-100 cursor-pointer"
+                  />
+                  <p className="text-xs text-gray-400 mt-1">Fill it in, then take a photo or scan it. Max 20 MB.</p>
+                </div>
+                <button type="submit" disabled={uploading || !file} className="btn-primary w-full">
+                  {uploading ? 'Submitting...' : submission ? 'Submit Again' : 'Submit Completed Work'}
+                </button>
+              </form>
+            </>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── TEACHER/ADMIN: VIEW STUDENT SUBMISSIONS ────────────────────────────────────
+function SubmissionsModal({ item, onClose }) {
+  const [rows, setRows] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [busyId, setBusyId] = useState(null);
+  const [commentDrafts, setCommentDrafts] = useState({});
+
+  const load = () => {
+    setLoading(true);
+    api.get(`/content/${item.id}/submissions`)
+      .then(({ data }) => setRows(data.submissions))
+      .catch(() => {})
+      .finally(() => setLoading(false));
+  };
+  useEffect(() => { load(); }, [item.id]);
+
+  const handleDownload = async submissionId => {
+    const { data } = await api.get(`/content/submission/${submissionId}/download`);
+    window.open(data.signedUrl, '_blank');
+  };
+
+  const handleMarkReviewed = async submissionId => {
+    setBusyId(submissionId);
+    try {
+      await api.patch(`/content/submission/${submissionId}`, {
+        status: 'reviewed',
+        teacherComment: commentDrafts[submissionId] || undefined,
+      });
+      load();
+    } catch {} finally { setBusyId(null); }
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 px-4">
+      <div className="bg-white rounded-xl shadow-xl w-full max-w-lg max-h-[80vh] flex flex-col">
+        <div className="flex items-center justify-between p-5 border-b border-gray-100">
+          <h2 className="font-semibold text-gray-800">Submissions — {item.title}</h2>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-600 text-xl">×</button>
+        </div>
+        <div className="p-5 flex-1 overflow-y-auto">
+          {loading ? (
+            <div className="text-center py-8 text-gray-400">Loading...</div>
+          ) : rows.length === 0 ? (
+            <div className="text-center py-8 text-gray-400 text-sm">No students are assigned to this content yet.</div>
+          ) : (
+            <div className="space-y-3">
+              {rows.map(r => (
+                <div key={r.studentId} className="border border-gray-100 rounded-lg p-3">
+                  <div className="flex items-center justify-between gap-2 mb-1">
+                    <span className="font-medium text-sm text-gray-900">{r.studentName}</span>
+                    {!r.submission ? (
+                      <span className="text-xs px-2 py-0.5 rounded-full bg-gray-100 text-gray-500">Not submitted</span>
+                    ) : r.submission.status === 'reviewed' ? (
+                      <span className="text-xs px-2 py-0.5 rounded-full bg-green-100 text-green-800">Reviewed</span>
+                    ) : (
+                      <span className="text-xs px-2 py-0.5 rounded-full bg-blue-100 text-blue-800">Submitted</span>
+                    )}
+                  </div>
+                  {r.submission && (
+                    <>
+                      <p className="text-xs text-gray-400 mb-2">
+                        {r.submission.fileName} · {new Date(r.submission.submittedAt).toLocaleString()}
+                      </p>
+                      <div className="flex gap-2 flex-wrap items-center">
+                        <button onClick={() => handleDownload(r.submission.id)} className="btn-secondary text-xs py-1 px-2">
+                          📄 View / Download
+                        </button>
+                        {r.submission.status !== 'reviewed' && (
+                          <>
+                            <input
+                              type="text" placeholder="Optional note to student..."
+                              value={commentDrafts[r.submission.id] || ''}
+                              onChange={e => setCommentDrafts(d => ({ ...d, [r.submission.id]: e.target.value }))}
+                              className="input text-xs flex-1 min-w-[140px] py-1"
+                            />
+                            <button
+                              onClick={() => handleMarkReviewed(r.submission.id)}
+                              disabled={busyId === r.submission.id}
+                              className="btn-primary text-xs py-1 px-2"
+                            >
+                              {busyId === r.submission.id ? 'Saving...' : '✅ Mark Reviewed'}
+                            </button>
+                          </>
+                        )}
+                      </div>
+                      {r.submission.teacherComment && (
+                        <p className="text-xs text-gray-600 mt-2 pt-2 border-t border-gray-100">
+                          <span className="font-medium">Your note:</span> {r.submission.teacherComment}
+                        </p>
+                      )}
+                    </>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function UploadModal({ onClose, onUploaded }) {
   const [form, setForm] = useState({ title: '', category: 'Alphabet', difficulty: 'beginner', classLevel: '', contentType: '', isShared: false });
   const [file, setFile] = useState(null);
@@ -412,6 +616,8 @@ export default function ContentLibraryPage() {
   const [shareItem, setShareItem] = useState(null);
   const [assignItem, setAssignItem] = useState(null);
   const [setMetaItem, setSetMetaItem] = useState(null);
+  const [submitItem, setSubmitItem] = useState(null);
+  const [submissionsItem, setSubmissionsItem] = useState(null);
 
   const load = async () => {
     try {
@@ -506,6 +712,8 @@ export default function ContentLibraryPage() {
               onOpenTeacherShare={setShareItem}
               onOpenAssign={setAssignItem}
               onOpenSetMeta={setSetMetaItem}
+              onOpenSubmit={setSubmitItem}
+              onOpenSubmissions={setSubmissionsItem}
             />
           ))}
         </div>
@@ -514,6 +722,8 @@ export default function ContentLibraryPage() {
       {showUpload && <UploadModal onClose={() => setShowUpload(false)} onUploaded={load} />}
       {shareItem && <TeacherShareModal item={shareItem} onClose={() => setShareItem(null)} />}
       {assignItem && <AssignModal item={assignItem} onClose={() => setAssignItem(null)} />}
+      {submitItem && <SubmitWorkModal item={submitItem} onClose={() => setSubmitItem(null)} />}
+      {submissionsItem && <SubmissionsModal item={submissionsItem} onClose={() => setSubmissionsItem(null)} />}
       {setMetaItem && (
         <SetMetaModal
           item={setMetaItem}

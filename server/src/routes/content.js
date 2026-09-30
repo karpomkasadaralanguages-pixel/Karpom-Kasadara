@@ -4,7 +4,7 @@ const { z } = require('zod');
 const { v4: uuidv4 } = require('uuid');
 const prisma = require('../config/prisma');
 const { requireAuth, requireRole, requireContentOwnership, requireAssignment } = require('../middleware/auth');
-const { uploadFile, getSignedDownloadUrl } = require('../config/storage');
+const { uploadFile, getSignedViewUrl, getSignedDownloadUrl, deleteFile } = require('../config/storage');
 const { convertAndStore } = require('../services/converter');
 
 const upload = multer({
@@ -16,6 +16,19 @@ const upload = multer({
       'application/vnd.ms-powerpoint'];
     if (allowed.includes(file.mimetype)) return cb(null, true);
     cb(new Error('Only PDF and PowerPoint files are allowed.'));
+  }
+});
+
+// A student's completed workbook copy — usually a phone photo of a printed
+// page, sometimes a scanned PDF. Kept separate from the content-upload
+// multer instance above since the allowed types and size limit differ.
+const submissionUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 20 * 1024 * 1024 }, // 20MB
+  fileFilter: (req, file, cb) => {
+    const allowed = ['application/pdf', 'image/jpeg', 'image/png', 'image/heic', 'image/heif', 'image/webp'];
+    if (allowed.includes(file.mimetype)) return cb(null, true);
+    cb(new Error('Only PDF or image files (JPG, PNG, HEIC, WEBP) are allowed.'));
   }
 });
 
@@ -356,6 +369,145 @@ router.delete('/:id/assign/:studentId', requireAuth, requireRole('admin', 'teach
     });
     res.json({ message: 'Assignment removed.' });
   } catch (err) { next(err); }
+});
+
+// ── SUBMISSIONS ────────────────────────────────────────────────────────────────
+// A student's completed copy of an assigned workbook/worksheet, handed back
+// to the teacher. One submission per assignment — resubmitting overwrites the
+// file and resets status to "submitted".
+
+const submissionSelect = {
+  id: true, fileName: true, fileSizeBytes: true, mimeType: true,
+  submittedAt: true, status: true, teacherComment: true, reviewedAt: true,
+};
+
+// POST /content/:id/submit — student uploads their completed work
+router.post('/:id/submit', requireAuth, submissionUpload.single('file'), async (req, res, next) => {
+  try {
+    if (req.user.role !== 'student' || !req.user.profileId) {
+      return res.status(403).json({ error: { code: 'FORBIDDEN', message: 'Only students can submit completed work.' } });
+    }
+    if (!req.file) return res.status(400).json({ error: { code: 'NO_FILE', message: 'No file uploaded.' } });
+
+    const assignment = await prisma.contentAssignment.findUnique({
+      where: { contentId_studentId: { contentId: req.params.id, studentId: req.user.profileId } },
+      include: { submission: true }
+    });
+    if (!assignment) {
+      return res.status(403).json({ error: { code: 'NOT_ASSIGNED', message: 'This content has not been assigned to you.' } });
+    }
+
+    const ext = (req.file.originalname.split('.').pop() || 'dat').toLowerCase();
+    const path = `submissions/${req.user.profileId}/${uuidv4()}.${ext}`;
+    await uploadFile(path, req.file.buffer, req.file.mimetype);
+
+    const submission = await prisma.submission.upsert({
+      where: { assignmentId: assignment.id },
+      create: {
+        assignmentId: assignment.id,
+        studentId: req.user.profileId,
+        fileStoragePath: path,
+        fileName: req.file.originalname,
+        fileSizeBytes: req.file.size,
+        mimeType: req.file.mimetype,
+      },
+      update: {
+        fileStoragePath: path,
+        fileName: req.file.originalname,
+        fileSizeBytes: req.file.size,
+        mimeType: req.file.mimetype,
+        submittedAt: new Date(),
+        status: 'submitted',
+        teacherComment: null,
+        reviewedAt: null,
+        reviewedById: null,
+      },
+      select: submissionSelect,
+    });
+
+    // Clean up the previous file on resubmission (best-effort, non-blocking).
+    if (assignment.submission && assignment.submission.fileStoragePath !== path) {
+      deleteFile(assignment.submission.fileStoragePath).catch(() => {});
+    }
+
+    res.status(201).json({ submission });
+  } catch (err) { next(err); }
+});
+
+// GET /content/:id/submission — the logged-in student's own submission for this content
+router.get('/:id/submission', requireAuth, async (req, res, next) => {
+  try {
+    if (req.user.role !== 'student' || !req.user.profileId) return res.json({ submission: null });
+
+    const assignment = await prisma.contentAssignment.findUnique({
+      where: { contentId_studentId: { contentId: req.params.id, studentId: req.user.profileId } },
+      include: { submission: { select: submissionSelect } }
+    });
+    res.json({ submission: assignment?.submission || null });
+  } catch (err) { next(err); }
+});
+
+// GET /content/:id/submissions — teacher/admin: every assigned student's submission status
+router.get('/:id/submissions', requireAuth, requireRole('admin', 'teacher'), async (req, res, next) => {
+  try {
+    const assignments = await prisma.contentAssignment.findMany({
+      where: { contentId: req.params.id },
+      include: {
+        student: { select: { id: true, fullName: true } },
+        submission: { select: submissionSelect },
+      },
+      orderBy: { student: { fullName: 'asc' } },
+    });
+
+    res.json({
+      submissions: assignments.map(a => ({
+        studentId: a.student.id,
+        studentName: a.student.fullName,
+        submission: a.submission || null,
+      }))
+    });
+  } catch (err) { next(err); }
+});
+
+// GET /content/submission/:submissionId/download — signed URL to view/download a submission
+router.get('/submission/:submissionId/download', requireAuth, async (req, res, next) => {
+  try {
+    const submission = await prisma.submission.findUnique({ where: { id: req.params.submissionId } });
+    if (!submission) return res.status(404).json({ error: { code: 'NOT_FOUND', message: 'Submission not found.' } });
+
+    const isOwner = req.user.role === 'student' && req.user.profileId === submission.studentId;
+    const isStaff = ['admin', 'teacher'].includes(req.user.role);
+    if (!isOwner && !isStaff) {
+      return res.status(403).json({ error: { code: 'FORBIDDEN', message: 'You cannot access this submission.' } });
+    }
+
+    const signedUrl = await getSignedViewUrl(submission.fileStoragePath);
+    res.json({ signedUrl, fileName: submission.fileName, mimeType: submission.mimeType });
+  } catch (err) { next(err); }
+});
+
+// PATCH /content/submission/:submissionId — teacher/admin marks reviewed / leaves a note
+router.patch('/submission/:submissionId', requireAuth, requireRole('admin', 'teacher'), async (req, res, next) => {
+  try {
+    const data = z.object({
+      status: z.enum(['submitted', 'reviewed']).optional(),
+      teacherComment: z.string().max(2000).nullable().optional(),
+    }).parse(req.body);
+
+    const submission = await prisma.submission.update({
+      where: { id: req.params.submissionId },
+      data: {
+        ...data,
+        ...(data.status === 'reviewed' ? { reviewedAt: new Date(), reviewedById: req.user.id } : {}),
+      },
+      select: submissionSelect,
+    });
+
+    res.json({ submission });
+  } catch (err) {
+    if (err.name === 'ZodError') return res.status(400).json({ error: { code: 'VALIDATION', message: err.errors[0].message } });
+    next(err);
+  }
 });
 
 module.exports = router;

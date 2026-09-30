@@ -63,6 +63,11 @@ enum ContentType {
   teaching_guide
 }
 
+enum SubmissionStatus {
+  submitted
+  reviewed
+}
+
 model User {
   id           String     @id @default(uuid())
   role         Role
@@ -90,6 +95,7 @@ model User {
   // Each student account can have multiple student profiles (siblings) under one login.
   // For teacher/admin accounts this is simply empty.
   studentProfiles  StudentProfile[]   @relation("AccountProfiles")
+  reviewedSubmissions Submission[]    @relation("SubmissionReviewedBy")
 
   @@map("users")
 }
@@ -115,6 +121,7 @@ model StudentProfile {
   bookmarks       Bookmark[]
   notes           Note[]
   quizAttempts    QuizAttempt[]
+  submissions     Submission[]
 
   @@map("student_profiles")
 }
@@ -177,6 +184,30 @@ model Content {
   @@map("content")
 }
 
+// A student's completed copy of an assigned workbook/worksheet, handed back to
+// the teacher. One submission per assignment — resubmitting replaces the file
+// and resets status back to "submitted" so the teacher sees it needs another look.
+model Submission {
+  id              String           @id @default(uuid())
+  assignmentId    String           @unique @map("assignment_id")
+  studentId       String           @map("student_id")
+  fileStoragePath String           @map("file_storage_path")
+  fileName        String           @map("file_name")
+  fileSizeBytes   Int?             @map("file_size_bytes")
+  mimeType        String           @map("mime_type")
+  submittedAt     DateTime         @default(now()) @map("submitted_at")
+  status          SubmissionStatus @default(submitted)
+  teacherComment  String?          @map("teacher_comment")
+  reviewedAt      DateTime?        @map("reviewed_at")
+  reviewedById    String?          @map("reviewed_by")
+
+  assignment ContentAssignment @relation(fields: [assignmentId], references: [id], onDelete: Cascade)
+  student    StudentProfile    @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  reviewedBy User?             @relation("SubmissionReviewedBy", fields: [reviewedById], references: [id])
+
+  @@map("submissions")
+}
+
 model ContentTeacherShare {
   id        String   @id @default(uuid())
   contentId String   @map("content_id")
@@ -212,6 +243,7 @@ model ContentAssignment {
   content    Content        @relation(fields: [contentId], references: [id], onDelete: Cascade)
   student    StudentProfile @relation("AssignedTo", fields: [studentId], references: [id], onDelete: Cascade)
   assignedBy User           @relation("AssignedBy", fields: [assignedById], references: [id])
+  submission Submission?
 
   @@unique([contentId, studentId])
   @@map("content_assignments")
