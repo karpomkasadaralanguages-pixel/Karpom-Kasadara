@@ -109,6 +109,7 @@ router.post('/register', async (req, res, next) => {
       password: z.string().min(8),
       age: z.number().int().min(1).max(120),
       parentPhone: z.string().min(7).max(30),
+      classLevel: z.enum(['kg', 'class_1', 'class_2', 'class_3', 'class_4', 'class_5', 'class_6', 'class_7', 'class_8']).optional(),
     }).parse(req.body);
 
     const existing = await prisma.user.findUnique({ where: { email: data.email.toLowerCase() } });
@@ -123,6 +124,7 @@ router.post('/register', async (req, res, next) => {
         passwordHash,
         age: data.age,
         parentPhone: data.parentPhone,
+        classLevel: data.classLevel,
       }
     });
 
@@ -184,7 +186,13 @@ router.post('/forgot-password', resetLimiter, async (req, res, next) => {
     await prisma.passwordReset.create({ data: { userId: user.id, tokenHash, expiresAt } });
 
     const resetUrl = `${process.env.APP_URL}/reset-password?token=${token}&userId=${user.id}`;
-    await sendPasswordResetEmail({ to: user.email, fullName: user.fullName, resetUrl });
+    try {
+      await sendPasswordResetEmail({ to: user.email, fullName: user.fullName, resetUrl });
+    } catch (emailErr) {
+      // Log the real cause (bad Resend API key, unverified sending domain, etc.)
+      // but don't fail the request — the reset token is already created either way.
+      console.error('Failed to send password reset email:', emailErr.message);
+    }
 
     res.json({ message: 'If an account exists, a reset email has been sent.' });
   } catch (err) {

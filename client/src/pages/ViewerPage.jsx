@@ -201,7 +201,24 @@ export default function ViewerPage() {
     if (canvas) canvas.getContext('2d').clearRect(0, 0, canvas.width, canvas.height);
   };
 
-  const cursor = { [TOOLS.NONE]: 'default', [TOOLS.PEN]: 'crosshair', [TOOLS.HIGHLIGHTER]: 'crosshair', [TOOLS.ERASER]: 'cell' };
+  // A small pen-shaped SVG cursor so kids see a pen nib (not a "+") while drawing.
+  // The hotspot (last two numbers) is placed at the pen's tip.
+  const PEN_CURSOR_SVG = encodeURIComponent(
+    `<svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 28 28">
+      <g transform="rotate(45 14 14)">
+        <rect x="12" y="2" width="4" height="16" rx="1.5" fill="${penColor}" stroke="white" stroke-width="1"/>
+        <polygon points="12,18 16,18 14,25" fill="${penColor}" stroke="white" stroke-width="1"/>
+      </g>
+    </svg>`
+  );
+  const penCursorUrl = `url("data:image/svg+xml,${PEN_CURSOR_SVG}") 4 24, crosshair`;
+
+  const cursor = {
+    [TOOLS.NONE]: 'default',
+    [TOOLS.PEN]: penCursorUrl,
+    [TOOLS.HIGHLIGHTER]: 'crosshair',
+    [TOOLS.ERASER]: 'cell'
+  };
 
   if (error) return (
     <div className="min-h-screen flex items-center justify-center">
@@ -251,7 +268,7 @@ export default function ViewerPage() {
       {/* ── ANNOTATION TOOLBAR ──────────────────────────────────────────────── */}
       <div className="flex items-center gap-2 bg-gray-700 px-4 py-1.5 flex-shrink-0 flex-wrap">
         {[
-          { t: TOOLS.NONE, label: '✋', title: 'Select' },
+          { t: TOOLS.NONE, label: '✋', title: 'Stop Drawing (scroll & read normally)' },
           { t: TOOLS.PEN, label: '✏️', title: 'Pen' },
           { t: TOOLS.HIGHLIGHTER, label: '🖊', title: 'Highlighter' },
           { t: TOOLS.ERASER, label: '⬜', title: 'Eraser' },

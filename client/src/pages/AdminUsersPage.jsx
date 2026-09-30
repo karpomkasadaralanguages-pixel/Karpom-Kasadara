@@ -2,6 +2,18 @@ import React, { useEffect, useState } from 'react';
 import api from '../api/axios';
 import useAuthStore from '../store/authStore';
 
+export const CLASS_LEVELS = [
+  { value: 'kg', label: 'KG' },
+  { value: 'class_1', label: '1st' },
+  { value: 'class_2', label: '2nd' },
+  { value: 'class_3', label: '3rd' },
+  { value: 'class_4', label: '4th' },
+  { value: 'class_5', label: '5th' },
+  { value: 'class_6', label: '6th' },
+  { value: 'class_7', label: '7th' },
+  { value: 'class_8', label: '8th' },
+];
+
 // ── MODALS ────────────────────────────────────────────────────────────────────
 function Modal({ title, onClose, children }) {
   return (
@@ -32,8 +44,8 @@ export function AdminUsersPage() {
   const [transferUser, setTransferUser] = useState(null);
 
   // Form states
-  const [createForm, setCreateForm] = useState({ role: 'student', fullName: '', email: '', password: '', age: '', parentPhone: '' });
-  const [editForm, setEditForm] = useState({ fullName: '', email: '' });
+  const [createForm, setCreateForm] = useState({ role: 'student', fullName: '', email: '', password: '', age: '', parentPhone: '', classLevel: '' });
+  const [editForm, setEditForm] = useState({ fullName: '', email: '', age: '', parentPhone: '', classLevel: '' });
   const [resetForm, setResetForm] = useState({ password: '', confirm: '' });
   const [transferTo, setTransferTo] = useState('');
   const [assignTeacher, setAssignTeacher] = useState(null);
@@ -61,11 +73,15 @@ export function AdminUsersPage() {
     e.preventDefault();
     setSaving(true); setError('');
     try {
-      const payload = { ...createForm, age: createForm.age ? parseInt(createForm.age) : undefined };
+      const payload = {
+        ...createForm,
+        age: createForm.age ? parseInt(createForm.age) : undefined,
+        classLevel: createForm.classLevel || undefined,
+      };
       await api.post('/users', payload);
       await load();
       setShowCreate(false);
-      setCreateForm({ role: 'student', fullName: '', email: '', password: '', age: '', parentPhone: '' });
+      setCreateForm({ role: 'student', fullName: '', email: '', password: '', age: '', parentPhone: '', classLevel: '' });
       showSuccess('User created successfully.');
     } catch (err) { setError(err.response?.data?.error?.message || 'Failed to create user.'); }
     finally { setSaving(false); }
@@ -74,7 +90,13 @@ export function AdminUsersPage() {
   // ── EDIT ───────────────────────────────────────────────────────────────────
   const openEdit = u => {
     setEditUser(u);
-    setEditForm({ fullName: u.fullName, email: u.email });
+    setEditForm({
+      fullName: u.fullName,
+      email: u.email,
+      age: u.age ?? '',
+      parentPhone: u.parentPhone || '',
+      classLevel: u.classLevel || '',
+    });
     setError('');
   };
 
@@ -82,8 +104,14 @@ export function AdminUsersPage() {
     e.preventDefault();
     setSaving(true); setError('');
     try {
-      await api.patch(`/users/${editUser.id}`, { fullName: editForm.fullName });
-      setUsers(us => us.map(u => u.id === editUser.id ? { ...u, fullName: editForm.fullName } : u));
+      const payload = { fullName: editForm.fullName };
+      if (editUser.role === 'student') {
+        payload.age = editForm.age === '' ? undefined : parseInt(editForm.age, 10);
+        payload.parentPhone = editForm.parentPhone;
+        payload.classLevel = editForm.classLevel === '' ? '' : editForm.classLevel;
+      }
+      const { data } = await api.patch(`/users/${editUser.id}`, payload);
+      setUsers(us => us.map(u => u.id === editUser.id ? { ...u, ...data.user } : u));
       setEditUser(null);
       showSuccess('User details updated.');
     } catch (err) { setError(err.response?.data?.error?.message || 'Failed to update user.'); }
@@ -294,6 +322,13 @@ export function AdminUsersPage() {
                 <label className="block text-sm font-medium text-gray-700 mb-1">Parent Phone Number</label>
                 <input type="tel" className="input" value={createForm.parentPhone} onChange={e => setCreateForm(f => ({ ...f, parentPhone: e.target.value }))} />
               </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Class</label>
+                <select className="input" value={createForm.classLevel} onChange={e => setCreateForm(f => ({ ...f, classLevel: e.target.value }))}>
+                  <option value="">Not set</option>
+                  {CLASS_LEVELS.map(c => <option key={c.value} value={c.value}>{c.label}</option>)}
+                </select>
+              </div>
             </>}
             <div className="flex gap-3 pt-2">
               <button type="button" onClick={() => setShowCreate(false)} className="btn-secondary flex-1">Cancel</button>
@@ -315,10 +350,29 @@ export function AdminUsersPage() {
             </div>
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Email</label>
-              <input type="email" className="input" value={editForm.email} disabled
-                className="input bg-gray-50 text-gray-400 cursor-not-allowed" />
+              <input type="email" className="input bg-gray-50 text-gray-400 cursor-not-allowed" value={editForm.email} disabled />
               <p className="text-xs text-gray-400 mt-1">Email cannot be changed to preserve login integrity.</p>
             </div>
+            {editUser.role === 'student' && <>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Age</label>
+                <input type="number" className="input" value={editForm.age}
+                  onChange={e => setEditForm(f => ({ ...f, age: e.target.value }))} />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Parent Phone Number</label>
+                <input type="tel" className="input" value={editForm.parentPhone}
+                  onChange={e => setEditForm(f => ({ ...f, parentPhone: e.target.value }))} />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Class</label>
+                <select className="input" value={editForm.classLevel}
+                  onChange={e => setEditForm(f => ({ ...f, classLevel: e.target.value }))}>
+                  <option value="">Not set</option>
+                  {CLASS_LEVELS.map(c => <option key={c.value} value={c.value}>{c.label}</option>)}
+                </select>
+              </div>
+            </>}
             <div className="flex gap-3 pt-2">
               <button type="button" onClick={() => setEditUser(null)} className="btn-secondary flex-1">Cancel</button>
               <button type="submit" disabled={saving} className="btn-primary flex-1">{saving ? 'Saving...' : 'Save Changes'}</button>
@@ -710,18 +764,43 @@ export function AdminAnnouncementsPage() {
 
 // ── PROFILE ───────────────────────────────────────────────────────────────────
 export function ProfilePage() {
-  const { user } = useAuthStore();
-  const [form, setForm] = useState({ fullName: user?.fullName || '', age: '', parentPhone: '' });
+  const { user, updateUser } = useAuthStore();
+  const [form, setForm] = useState({ fullName: user?.fullName || '', age: '', parentPhone: '', classLevel: '' });
+  const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState('');
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    if (!user?.id) return;
+    api.get(`/users/${user.id}`).then(({ data }) => {
+      setForm({
+        fullName: data.user.fullName || '',
+        age: data.user.age ?? '',
+        parentPhone: data.user.parentPhone || '',
+        classLevel: data.user.classLevel || '',
+      });
+    }).finally(() => setLoading(false));
+  }, [user?.id]);
 
   const handleSave = async e => {
     e.preventDefault();
-    setSaving(true);
+    setSaving(true); setError('');
     try {
-      await api.patch(`/users/${user.id}`, form);
+      // Only send fields that have real values — an empty string for age
+      // must not be sent as a number, and blank fields shouldn't wipe out
+      // existing data by accident.
+      const payload = { fullName: form.fullName };
+      if (form.age !== '') payload.age = parseInt(form.age, 10);
+      if (form.parentPhone !== '') payload.parentPhone = form.parentPhone;
+      if (form.classLevel !== '') payload.classLevel = form.classLevel;
+
+      const { data } = await api.patch(`/users/${user.id}`, payload);
+      updateUser({ fullName: data.user.fullName });
       setMsg('Profile updated successfully.');
-    } catch { setMsg('Failed to save changes.'); }
+    } catch (err) {
+      setError(err.response?.data?.error?.message || 'Failed to save changes.');
+    }
     finally { setSaving(false); setTimeout(() => setMsg(''), 3000); }
   };
 
@@ -742,29 +821,40 @@ export function ProfilePage() {
             <div className="text-xs text-primary-700 capitalize mt-0.5">{user?.role}</div>
           </div>
         </div>
-        <form onSubmit={handleSave} className="space-y-4">
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Full Name</label>
-            <input type="text" className="input" value={form.fullName}
-              onChange={e => setForm(f => ({ ...f, fullName: e.target.value }))} required />
-          </div>
-          {user?.role === 'student' && <>
+        {loading ? <div className="text-center py-8 text-gray-400">Loading...</div> : (
+          <form onSubmit={handleSave} className="space-y-4">
+            {error && <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700">{error}</div>}
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Age</label>
-              <input type="number" className="input" value={form.age}
-                onChange={e => setForm(f => ({ ...f, age: e.target.value }))} />
+              <label className="block text-sm font-medium text-gray-700 mb-1">Full Name</label>
+              <input type="text" className="input" value={form.fullName}
+                onChange={e => setForm(f => ({ ...f, fullName: e.target.value }))} required />
             </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Parent Phone Number</label>
-              <input type="tel" className="input" value={form.parentPhone}
-                onChange={e => setForm(f => ({ ...f, parentPhone: e.target.value }))} />
-            </div>
-          </>}
-          {msg && <div className="p-3 bg-green-50 border border-green-200 rounded-lg text-sm text-green-700">{msg}</div>}
-          <button type="submit" disabled={saving} className="btn-primary w-full">
-            {saving ? 'Saving...' : 'Save Changes'}
-          </button>
-        </form>
+            {user?.role === 'student' && <>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Age</label>
+                <input type="number" className="input" value={form.age}
+                  onChange={e => setForm(f => ({ ...f, age: e.target.value }))} />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Parent Phone Number</label>
+                <input type="tel" className="input" value={form.parentPhone}
+                  onChange={e => setForm(f => ({ ...f, parentPhone: e.target.value }))} />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Class</label>
+                <select className="input" value={form.classLevel}
+                  onChange={e => setForm(f => ({ ...f, classLevel: e.target.value }))}>
+                  <option value="">Not set</option>
+                  {CLASS_LEVELS.map(c => <option key={c.value} value={c.value}>{c.label}</option>)}
+                </select>
+              </div>
+            </>}
+            {msg && <div className="p-3 bg-green-50 border border-green-200 rounded-lg text-sm text-green-700">{msg}</div>}
+            <button type="submit" disabled={saving} className="btn-primary w-full">
+              {saving ? 'Saving...' : 'Save Changes'}
+            </button>
+          </form>
+        )}
       </div>
     </div>
   );

@@ -12,6 +12,7 @@ const bookmarkRoutes = require('./routes/bookmarks');
 const noteRoutes = require('./routes/notes');
 const announcementRoutes = require('./routes/announcements');
 const quizRoutes = require('./routes/quizzes');
+const inquiryRoutes = require('./routes/inquiries');
 const { errorHandler } = require('./middleware/errorHandler');
 
 const app = express();
@@ -67,6 +68,7 @@ app.use('/api/v1/bookmarks', bookmarkRoutes);
 app.use('/api/v1/notes', noteRoutes);
 app.use('/api/v1/announcements', announcementRoutes);
 app.use('/api/v1/quizzes', quizRoutes);
+app.use('/api/v1/inquiries', inquiryRoutes);
 
 // ── ERROR HANDLER ─────────────────────────────────────────────────────────────
 app.use(errorHandler);

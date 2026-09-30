@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import api from '../api/axios';
 import useAuthStore from '../store/authStore';
+import { CLASS_LEVELS } from './AdminUsersPage';
 
 // ── REGISTER ──────────────────────────────────────────────────────────────────
 export function RegisterPage() {
@@ -14,6 +15,7 @@ export function RegisterPage() {
     password: '',
     age: '',
     parentPhone: '',
+    classLevel: '',
   });
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
@@ -23,7 +25,7 @@ export function RegisterPage() {
     setError('');
     setLoading(true);
     try {
-      await api.post('/auth/register', { ...form, age: parseInt(form.age) });
+      await api.post('/auth/register', { ...form, age: parseInt(form.age), classLevel: form.classLevel || undefined });
       await login(form.email, form.password);
       navigate('/dashboard');
     } catch (err) {
@@ -70,6 +72,13 @@ export function RegisterPage() {
               <label className="block text-sm font-medium text-gray-700 mb-1">Parent Phone Number / <span className="font-tamil">பெற்றோர் தொலைபேசி</span></label>
               <input type="tel" className="input" placeholder="+1 234 567 8900" value={form.parentPhone} onChange={e => setForm(f => ({ ...f, parentPhone: e.target.value }))} required />
             </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Class / <span className="font-tamil">வகுப்பு</span></label>
+              <select className="input" value={form.classLevel} onChange={e => setForm(f => ({ ...f, classLevel: e.target.value }))}>
+                <option value="">Select class...</option>
+                {CLASS_LEVELS.map(c => <option key={c.value} value={c.value}>{c.label}</option>)}
+              </select>
+            </div>
             <button type="submit" disabled={loading} className="btn-primary w-full mt-2">
               {loading ? 'Creating account...' : <><span className="font-tamil">பதிவு செய்</span> / Register</>}
             </button>
@@ -89,14 +98,18 @@ export function ForgotPasswordPage() {
   const [email, setEmail] = useState('');
   const [sent, setSent] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
 
   const handleSubmit = async e => {
     e.preventDefault();
     setLoading(true);
+    setError('');
     try {
       await api.post('/auth/forgot-password', { email });
       setSent(true);
-    } catch {} finally { setLoading(false); }
+    } catch (err) {
+      setError(err.response?.data?.error?.message || 'Something went wrong. Please try again.');
+    } finally { setLoading(false); }
   };
 
   return (
@@ -118,6 +131,7 @@ export function ForgotPasswordPage() {
             </div>
           ) : (
             <form onSubmit={handleSubmit} className="space-y-4">
+              {error && <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700">{error}</div>}
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Email address</label>
                 <input type="email" className="input" value={email} onChange={e => setEmail(e.target.value)} required />
