@@ -4,6 +4,12 @@ const { z } = require('zod');
 const prisma = require('../config/prisma');
 const { requireAuth, requireRole } = require('../middleware/auth');
 
+const CLASS_LEVEL_ENUM = z.enum(['kg', 'class_1', 'class_2', 'class_3', 'class_4', 'class_5', 'class_6', 'class_7', 'class_8']);
+
+function canManageAccount(req, accountId) {
+  return req.user.role === 'admin' || req.user.id === accountId;
+}
+
 // ── GET /users — admin only ───────────────────────────────────────────────────
 router.get('/', requireAuth, requireRole('admin'), async (req, res, next) => {
   try {
@@ -13,39 +19,62 @@ router.get('/', requireAuth, requireRole('admin'), async (req, res, next) => {
 
     const users = await prisma.user.findMany({
       where,
-      select: { id: true, role: true, fullName: true, email: true, status: true, createdAt: true, lastLoginAt: true, age: true, parentPhone: true, classLevel: true },
+      select: {
+        id: true, role: true, fullName: true, email: true, status: true, createdAt: true, lastLoginAt: true, parentPhone: true,
+        studentProfiles: { where: { deletedAt: null }, orderBy: { createdAt: 'asc' }, select: { id: true, fullName: true, age: true, classLevel: true } },
+      },
       orderBy: { createdAt: 'desc' },
       take: parseInt(limit),
       ...(cursor && { cursor: { id: cursor }, skip: 1 }),
     });
 
-    res.json({ users });
+    // Keep the response shape close to before (profiles is additive), and map
+    // studentProfiles -> profiles for a clearer name on the wire.
+    res.json({ users: users.map(({ studentProfiles, ...u }) => ({ ...u, profiles: studentProfiles })) });
   } catch (err) { next(err); }
 });
 
-// ── POST /users — admin creates teacher or student ────────────────────────────
+// ── POST /users — admin creates teacher, student, or admin ────────────────────
 router.post('/', requireAuth, requireRole('admin'), async (req, res, next) => {
   try {
     const data = z.object({
-      role: z.enum(['teacher', 'student']),
+      role: z.enum(['teacher', 'student', 'admin']),
       fullName: z.string().min(2).max(255),
       email: z.string().email(),
       password: z.string().min(8),
       age: z.number().int().optional(),
       parentPhone: z.string().optional(),
-      classLevel: z.enum(['kg', 'class_1', 'class_2', 'class_3', 'class_4', 'class_5', 'class_6', 'class_7', 'class_8']).optional(),
+      classLevel: CLASS_LEVEL_ENUM.optional(),
     }).parse(req.body);
 
     const existing = await prisma.user.findUnique({ where: { email: data.email.toLowerCase() } });
     if (existing) return res.status(409).json({ error: { code: 'EMAIL_TAKEN', message: 'Email already in use.' } });
 
     const passwordHash = await bcrypt.hash(data.password, 12);
-    const user = await prisma.user.create({
-      data: { ...data, email: data.email.toLowerCase(), passwordHash, password: undefined },
-      select: { id: true, role: true, fullName: true, email: true, createdAt: true, classLevel: true }
+
+    const user = await prisma.$transaction(async tx => {
+      const user = await tx.user.create({
+        data: {
+          role: data.role,
+          fullName: data.fullName,
+          email: data.email.toLowerCase(),
+          passwordHash,
+          parentPhone: data.role === 'student' ? data.parentPhone : undefined,
+        }
+      });
+      if (data.role === 'student') {
+        await tx.studentProfile.create({
+          data: { accountId: user.id, fullName: data.fullName, age: data.age, classLevel: data.classLevel }
+        });
+      }
+      return user;
     });
 
-    res.status(201).json({ user });
+    const profiles = data.role === 'student'
+      ? await prisma.studentProfile.findMany({ where: { accountId: user.id }, select: { id: true, fullName: true, age: true, classLevel: true } })
+      : undefined;
+
+    res.status(201).json({ user: { id: user.id, role: user.role, fullName: user.fullName, email: user.email, createdAt: user.createdAt, profiles } });
   } catch (err) {
     if (err.name === 'ZodError') return res.status(400).json({ error: { code: 'VALIDATION', message: err.errors[0].message } });
     next(err);
@@ -55,38 +84,37 @@ router.post('/', requireAuth, requireRole('admin'), async (req, res, next) => {
 // ── GET /users/:id ────────────────────────────────────────────────────────────
 router.get('/:id', requireAuth, async (req, res, next) => {
   try {
-    if (req.user.role !== 'admin' && req.user.id !== req.params.id) {
+    if (!canManageAccount(req, req.params.id)) {
       return res.status(403).json({ error: { code: 'FORBIDDEN', message: 'Access denied.' } });
     }
 
     const user = await prisma.user.findUnique({
       where: { id: req.params.id, deletedAt: null },
-      select: { id: true, role: true, fullName: true, email: true, status: true, age: true, parentPhone: true, classLevel: true, createdAt: true, lastLoginAt: true }
+      select: {
+        id: true, role: true, fullName: true, email: true, status: true, parentPhone: true, createdAt: true, lastLoginAt: true,
+        studentProfiles: { where: { deletedAt: null }, orderBy: { createdAt: 'asc' }, select: { id: true, fullName: true, age: true, classLevel: true } },
+      }
     });
     if (!user) return res.status(404).json({ error: { code: 'NOT_FOUND', message: 'User not found.' } });
 
-    res.json({ user });
+    const { studentProfiles, ...rest } = user;
+    res.json({ user: { ...rest, profiles: studentProfiles } });
   } catch (err) { next(err); }
 });
 
-// ── PATCH /users/:id ──────────────────────────────────────────────────────────
+// ── PATCH /users/:id — account-level fields only (name, contact, status) ───────
+// Per-child fields (age, classLevel) live on profiles now — see the
+// /:id/profiles endpoints below.
 router.patch('/:id', requireAuth, async (req, res, next) => {
   try {
-    if (req.user.role !== 'admin' && req.user.id !== req.params.id) {
+    if (!canManageAccount(req, req.params.id)) {
       return res.status(403).json({ error: { code: 'FORBIDDEN', message: 'Access denied.' } });
     }
 
     const data = z.object({
       fullName: z.string().min(2).max(255).optional(),
-      // Accept '', null, or a number for age — empty string means "leave unchanged"
-      age: z.union([z.number().int(), z.literal(''), z.null()]).optional()
-        .transform(v => (v === '' || v === null || v === undefined ? undefined : v)),
       parentPhone: z.union([z.string(), z.null()]).optional()
         .transform(v => (v === null ? undefined : v)),
-      classLevel: z.union([
-        z.enum(['kg', 'class_1', 'class_2', 'class_3', 'class_4', 'class_5', 'class_6', 'class_7', 'class_8']),
-        z.literal(''), z.null()
-      ]).optional().transform(v => (v === '' || v === null ? null : v)),
       status: z.enum(['active', 'suspended']).optional(),
     }).parse(req.body);
 
@@ -98,12 +126,98 @@ router.patch('/:id', requireAuth, async (req, res, next) => {
     const user = await prisma.user.update({
       where: { id: req.params.id },
       data,
-      select: { id: true, role: true, fullName: true, email: true, status: true, age: true, parentPhone: true, classLevel: true }
+      select: { id: true, role: true, fullName: true, email: true, status: true, parentPhone: true }
     });
 
     res.json({ user });
   } catch (err) {
     if (err.name === 'ZodError') return res.status(400).json({ error: { code: 'VALIDATION', message: err.errors[0].message } });
+    next(err);
+  }
+});
+
+// ── GET /users/:id/profiles — list a student account's child profiles ─────────
+router.get('/:id/profiles', requireAuth, async (req, res, next) => {
+  try {
+    if (!canManageAccount(req, req.params.id)) {
+      return res.status(403).json({ error: { code: 'FORBIDDEN', message: 'Access denied.' } });
+    }
+    const profiles = await prisma.studentProfile.findMany({
+      where: { accountId: req.params.id, deletedAt: null },
+      orderBy: { createdAt: 'asc' },
+    });
+    res.json({ profiles });
+  } catch (err) { next(err); }
+});
+
+// ── POST /users/:id/profiles — add a sibling profile (self or admin) ──────────
+router.post('/:id/profiles', requireAuth, async (req, res, next) => {
+  try {
+    if (!canManageAccount(req, req.params.id)) {
+      return res.status(403).json({ error: { code: 'FORBIDDEN', message: 'Access denied.' } });
+    }
+    const account = await prisma.user.findUnique({ where: { id: req.params.id } });
+    if (!account || account.role !== 'student') {
+      return res.status(400).json({ error: { code: 'INVALID', message: 'Profiles can only be added to a student account.' } });
+    }
+
+    const data = z.object({
+      fullName: z.string().min(2).max(255),
+      age: z.number().int().min(1).max(120).optional(),
+      classLevel: CLASS_LEVEL_ENUM.optional(),
+    }).parse(req.body);
+
+    const profile = await prisma.studentProfile.create({
+      data: { accountId: req.params.id, fullName: data.fullName, age: data.age, classLevel: data.classLevel }
+    });
+
+    res.status(201).json({ profile });
+  } catch (err) {
+    if (err.name === 'ZodError') return res.status(400).json({ error: { code: 'VALIDATION', message: err.errors[0].message } });
+    next(err);
+  }
+});
+
+// ── PATCH /users/:id/profiles/:profileId — edit a child profile ───────────────
+router.patch('/:id/profiles/:profileId', requireAuth, async (req, res, next) => {
+  try {
+    if (!canManageAccount(req, req.params.id)) {
+      return res.status(403).json({ error: { code: 'FORBIDDEN', message: 'Access denied.' } });
+    }
+
+    const data = z.object({
+      fullName: z.string().min(2).max(255).optional(),
+      age: z.union([z.number().int().min(1).max(120), z.literal(''), z.null()]).optional()
+        .transform(v => (v === '' || v === null ? undefined : v)),
+      classLevel: z.union([CLASS_LEVEL_ENUM, z.literal(''), z.null()]).optional()
+        .transform(v => (v === '' || v === null ? null : v)),
+    }).parse(req.body);
+    Object.keys(data).forEach(k => data[k] === undefined && delete data[k]);
+
+    const profile = await prisma.studentProfile.update({
+      where: { id: req.params.profileId, accountId: req.params.id },
+      data,
+    });
+
+    res.json({ profile });
+  } catch (err) {
+    if (err.name === 'ZodError') return res.status(400).json({ error: { code: 'VALIDATION', message: err.errors[0].message } });
+    if (err.code === 'P2025') return res.status(404).json({ error: { code: 'NOT_FOUND', message: 'Profile not found.' } });
+    next(err);
+  }
+});
+
+// ── DELETE /users/:id/profiles/:profileId — admin only (removes a child) ──────
+router.delete('/:id/profiles/:profileId', requireAuth, requireRole('admin'), async (req, res, next) => {
+  try {
+    const remaining = await prisma.studentProfile.count({ where: { accountId: req.params.id, deletedAt: null } });
+    if (remaining <= 1) {
+      return res.status(400).json({ error: { code: 'LAST_PROFILE', message: 'Cannot remove the only profile on this account — delete the account instead.' } });
+    }
+    await prisma.studentProfile.update({ where: { id: req.params.profileId, accountId: req.params.id }, data: { deletedAt: new Date() } });
+    res.json({ message: 'Profile removed.' });
+  } catch (err) {
+    if (err.code === 'P2025') return res.status(404).json({ error: { code: 'NOT_FOUND', message: 'Profile not found.' } });
     next(err);
   }
 });
@@ -129,7 +243,9 @@ router.delete('/:id', requireAuth, requireRole('admin'), async (req, res, next) 
   } catch (err) { next(err); }
 });
 
-// ── GET /users/:id/students — teacher or admin ────────────────────────────────
+// ── GET /users/:id/students — teacher or admin. :id is the teacher's account ───
+// id; the returned "students" are StudentProfile rows (one per child), each
+// carrying the parent account's email/status/lastLoginAt for display.
 router.get('/:id/students', requireAuth, async (req, res, next) => {
   try {
     if (req.user.role === 'student') return res.status(403).json({ error: { code: 'FORBIDDEN', message: 'Access denied.' } });
@@ -141,16 +257,30 @@ router.get('/:id/students', requireAuth, async (req, res, next) => {
       where: { teacherId: req.params.id },
       include: {
         student: {
-          select: { id: true, fullName: true, email: true, age: true, status: true, lastLoginAt: true }
+          select: {
+            id: true, fullName: true, age: true, classLevel: true,
+            account: { select: { email: true, status: true, lastLoginAt: true } },
+          }
         }
       }
     });
 
-    res.json({ students: relations.map(r => r.student) });
+    res.json({
+      students: relations.map(r => ({
+        id: r.student.id,
+        fullName: r.student.fullName,
+        age: r.student.age,
+        classLevel: r.student.classLevel,
+        email: r.student.account.email,
+        status: r.student.account.status,
+        lastLoginAt: r.student.account.lastLoginAt,
+      }))
+    });
   } catch (err) { next(err); }
 });
 
-// ── POST /users/:id/students — assign student to teacher ──────────────────────
+// ── POST /users/:id/students — assign a student profile to teacher ────────────
+// Body's studentId is a StudentProfile id (a specific child), not an account id.
 router.post('/:id/students', requireAuth, async (req, res, next) => {
   try {
     if (req.user.role === 'student') return res.status(403).json({ error: { code: 'FORBIDDEN', message: 'Access denied.' } });
@@ -165,7 +295,7 @@ router.post('/:id/students', requireAuth, async (req, res, next) => {
   }
 });
 
-// ── DELETE /users/:id/students/:sid ───────────────────────────────────────────
+// ── DELETE /users/:id/students/:sid — :sid is a StudentProfile id ─────────────
 router.delete('/:id/students/:sid', requireAuth, async (req, res, next) => {
   try {
     if (req.user.role === 'student') return res.status(403).json({ error: { code: 'FORBIDDEN', message: 'Access denied.' } });
@@ -174,11 +304,11 @@ router.delete('/:id/students/:sid', requireAuth, async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
-// ── GET /users/:id/progress — teacher sees their student's progress ────────────
+// ── GET /users/:id/progress — :id is a StudentProfile id ──────────────────────
 router.get('/:id/progress', requireAuth, async (req, res, next) => {
   try {
-    // Admin can see anyone, teacher only their students, student only self
-    if (req.user.role === 'student' && req.user.id !== req.params.id) {
+    // Admin can see anyone, teacher only their assigned students, student only their own active profile
+    if (req.user.role === 'student' && req.user.profileId !== req.params.id) {
       return res.status(403).json({ error: { code: 'FORBIDDEN', message: 'Access denied.' } });
     }
     if (req.user.role === 'teacher') {
@@ -187,7 +317,7 @@ router.get('/:id/progress', requireAuth, async (req, res, next) => {
     }
 
     const progress = await prisma.progress.findMany({
-      where: { userId: req.params.id },
+      where: { profileId: req.params.id },
       include: { content: { select: { id: true, title: true, category: true, pageCount: true } } },
       orderBy: { lastAccessedAt: 'desc' }
     });

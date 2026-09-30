@@ -45,11 +45,19 @@ export function AdminUsersPage() {
 
   // Form states
   const [createForm, setCreateForm] = useState({ role: 'student', fullName: '', email: '', password: '', age: '', parentPhone: '', classLevel: '' });
-  const [editForm, setEditForm] = useState({ fullName: '', email: '', age: '', parentPhone: '', classLevel: '' });
+  const [editForm, setEditForm] = useState({ fullName: '', email: '', parentPhone: '' });
   const [resetForm, setResetForm] = useState({ password: '', confirm: '' });
   const [transferTo, setTransferTo] = useState('');
   const [assignTeacher, setAssignTeacher] = useState(null);
-  const [assignStudentId, setAssignStudentId] = useState('');
+  const [assignProfileId, setAssignProfileId] = useState('');
+
+  // Profile management (student accounts can have multiple child profiles)
+  const [editProfiles, setEditProfiles] = useState([]);
+  const [newProfile, setNewProfile] = useState({ fullName: '', age: '', classLevel: '' });
+  const [profileBusy, setProfileBusy] = useState(false);
+  const [profileError, setProfileError] = useState('');
+  const [editingProfileId, setEditingProfileId] = useState(null);
+  const [editingProfileForm, setEditingProfileForm] = useState({ fullName: '', age: '', classLevel: '' });
 
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
@@ -93,10 +101,12 @@ export function AdminUsersPage() {
     setEditForm({
       fullName: u.fullName,
       email: u.email,
-      age: u.age ?? '',
       parentPhone: u.parentPhone || '',
-      classLevel: u.classLevel || '',
     });
+    setEditProfiles(u.profiles || []);
+    setNewProfile({ fullName: '', age: '', classLevel: '' });
+    setEditingProfileId(null);
+    setProfileError('');
     setError('');
   };
 
@@ -106,9 +116,7 @@ export function AdminUsersPage() {
     try {
       const payload = { fullName: editForm.fullName };
       if (editUser.role === 'student') {
-        payload.age = editForm.age === '' ? undefined : parseInt(editForm.age, 10);
         payload.parentPhone = editForm.parentPhone;
-        payload.classLevel = editForm.classLevel === '' ? '' : editForm.classLevel;
       }
       const { data } = await api.patch(`/users/${editUser.id}`, payload);
       setUsers(us => us.map(u => u.id === editUser.id ? { ...u, ...data.user } : u));
@@ -116,6 +124,61 @@ export function AdminUsersPage() {
       showSuccess('User details updated.');
     } catch (err) { setError(err.response?.data?.error?.message || 'Failed to update user.'); }
     finally { setSaving(false); }
+  };
+
+  // ── STUDENT PROFILES (children under a student account) ─────────────────────
+  const syncEditedProfilesIntoUsers = profiles => {
+    setEditProfiles(profiles);
+    setUsers(us => us.map(u => u.id === editUser.id ? { ...u, profiles } : u));
+  };
+
+  const handleAddProfile = async e => {
+    e.preventDefault();
+    if (!newProfile.fullName.trim()) { setProfileError('Please enter a name.'); return; }
+    setProfileBusy(true); setProfileError('');
+    try {
+      const payload = { fullName: newProfile.fullName };
+      if (newProfile.age !== '') payload.age = parseInt(newProfile.age, 10);
+      if (newProfile.classLevel !== '') payload.classLevel = newProfile.classLevel;
+      const { data } = await api.post(`/users/${editUser.id}/profiles`, payload);
+      syncEditedProfilesIntoUsers([...editProfiles, data.profile]);
+      setNewProfile({ fullName: '', age: '', classLevel: '' });
+      showSuccess(`Added student profile "${data.profile.fullName}".`);
+    } catch (err) { setProfileError(err.response?.data?.error?.message || 'Failed to add student.'); }
+    finally { setProfileBusy(false); }
+  };
+
+  const openEditProfile = p => {
+    setEditingProfileId(p.id);
+    setEditingProfileForm({ fullName: p.fullName, age: p.age ?? '', classLevel: p.classLevel || '' });
+    setProfileError('');
+  };
+
+  const handleSaveProfile = async e => {
+    e.preventDefault();
+    setProfileBusy(true); setProfileError('');
+    try {
+      const payload = { fullName: editingProfileForm.fullName };
+      payload.age = editingProfileForm.age === '' ? null : parseInt(editingProfileForm.age, 10);
+      payload.classLevel = editingProfileForm.classLevel === '' ? null : editingProfileForm.classLevel;
+      const { data } = await api.patch(`/users/${editUser.id}/profiles/${editingProfileId}`, payload);
+      syncEditedProfilesIntoUsers(editProfiles.map(p => p.id === editingProfileId ? data.profile : p));
+      setEditingProfileId(null);
+      showSuccess('Student profile updated.');
+    } catch (err) { setProfileError(err.response?.data?.error?.message || 'Failed to update student.'); }
+    finally { setProfileBusy(false); }
+  };
+
+  const handleDeleteProfile = async p => {
+    if (editProfiles.length <= 1) { setProfileError('An account must keep at least one student profile.'); return; }
+    if (!confirm(`Remove student profile "${p.fullName}"? Their progress, quizzes, and assignments will be removed too. This cannot be undone.`)) return;
+    setProfileBusy(true); setProfileError('');
+    try {
+      await api.delete(`/users/${editUser.id}/profiles/${p.id}`);
+      syncEditedProfilesIntoUsers(editProfiles.filter(x => x.id !== p.id));
+      showSuccess(`Removed student profile "${p.fullName}".`);
+    } catch (err) { setProfileError(err.response?.data?.error?.message || 'Failed to remove student.'); }
+    finally { setProfileBusy(false); }
   };
 
   // ── RESET PASSWORD ─────────────────────────────────────────────────────────
@@ -152,14 +215,22 @@ export function AdminUsersPage() {
   };
 
   // ── ASSIGN STUDENT TO TEACHER ──────────────────────────────────────────────
-  const openAssign = u => { setAssignTeacher(u); setAssignStudentId(''); setError(''); };
+  const openAssign = u => { setAssignTeacher(u); setAssignProfileId(''); setError(''); };
+
+  // Student accounts can hold several child profiles — flatten to a
+  // per-profile picker since assignment (and all student-scoped data) is
+  // keyed by profile, not by account.
+  const studentProfileOptions = users
+    .filter(u => u.role === 'student')
+    .flatMap(u => (u.profiles && u.profiles.length ? u.profiles : [{ id: u.id, fullName: u.fullName }])
+      .map(p => ({ ...p, accountEmail: u.email })));
 
   const handleAssign = async e => {
     e.preventDefault();
-    if (!assignStudentId) { setError('Please select a student.'); return; }
+    if (!assignProfileId) { setError('Please select a student.'); return; }
     setSaving(true); setError('');
     try {
-      await api.post(`/users/${assignTeacher.id}/students`, { studentId: assignStudentId });
+      await api.post(`/users/${assignTeacher.id}/students`, { studentId: assignProfileId });
       setAssignTeacher(null);
       showSuccess(`Student assigned to ${assignTeacher.fullName}.`);
     } catch (err) { setError(err.response?.data?.error?.message || 'Assignment failed.'); }
@@ -344,40 +415,101 @@ export function AdminUsersPage() {
           <form onSubmit={handleEdit} className="space-y-4">
             {error && <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700">{error}</div>}
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Full Name</label>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Account Name</label>
               <input type="text" className="input" value={editForm.fullName}
                 onChange={e => setEditForm(f => ({ ...f, fullName: e.target.value }))} required />
+              {editUser.role === 'student' && (
+                <p className="text-xs text-gray-400 mt-1">This is the login account's name (usually a parent/guardian). Manage individual students below.</p>
+              )}
             </div>
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Email</label>
               <input type="email" className="input bg-gray-50 text-gray-400 cursor-not-allowed" value={editForm.email} disabled />
               <p className="text-xs text-gray-400 mt-1">Email cannot be changed to preserve login integrity.</p>
             </div>
-            {editUser.role === 'student' && <>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Age</label>
-                <input type="number" className="input" value={editForm.age}
-                  onChange={e => setEditForm(f => ({ ...f, age: e.target.value }))} />
-              </div>
+            {editUser.role === 'student' && (
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Parent Phone Number</label>
                 <input type="tel" className="input" value={editForm.parentPhone}
                   onChange={e => setEditForm(f => ({ ...f, parentPhone: e.target.value }))} />
               </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Class</label>
-                <select className="input" value={editForm.classLevel}
-                  onChange={e => setEditForm(f => ({ ...f, classLevel: e.target.value }))}>
-                  <option value="">Not set</option>
-                  {CLASS_LEVELS.map(c => <option key={c.value} value={c.value}>{c.label}</option>)}
-                </select>
-              </div>
-            </>}
+            )}
             <div className="flex gap-3 pt-2">
               <button type="button" onClick={() => setEditUser(null)} className="btn-secondary flex-1">Cancel</button>
               <button type="submit" disabled={saving} className="btn-primary flex-1">{saving ? 'Saving...' : 'Save Changes'}</button>
             </div>
           </form>
+
+          {/* ── STUDENT PROFILES ──────────────────────────────────────────────── */}
+          {editUser.role === 'student' && (
+            <div className="mt-6 pt-5 border-t border-gray-100">
+              <h3 className="text-sm font-semibold text-gray-800 mb-1">Students on this Login</h3>
+              <p className="text-xs text-gray-500 mb-3">
+                One email can have several children under it. Each student here has fully separate progress, quizzes, and assignments.
+              </p>
+              {profileError && <div className="p-3 mb-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700">{profileError}</div>}
+
+              <div className="space-y-2 mb-4">
+                {editProfiles.map(p => (
+                  <div key={p.id} className="border border-gray-100 rounded-lg p-3">
+                    {editingProfileId === p.id ? (
+                      <form onSubmit={handleSaveProfile} className="space-y-2">
+                        <input type="text" className="input text-sm" value={editingProfileForm.fullName}
+                          onChange={e => setEditingProfileForm(f => ({ ...f, fullName: e.target.value }))} required />
+                        <div className="flex gap-2">
+                          <input type="number" className="input text-sm" placeholder="Age" value={editingProfileForm.age}
+                            onChange={e => setEditingProfileForm(f => ({ ...f, age: e.target.value }))} />
+                          <select className="input text-sm" value={editingProfileForm.classLevel}
+                            onChange={e => setEditingProfileForm(f => ({ ...f, classLevel: e.target.value }))}>
+                            <option value="">Class: Not set</option>
+                            {CLASS_LEVELS.map(c => <option key={c.value} value={c.value}>{c.label}</option>)}
+                          </select>
+                        </div>
+                        <div className="flex gap-2">
+                          <button type="button" onClick={() => setEditingProfileId(null)} className="btn-secondary text-xs flex-1 py-1.5">Cancel</button>
+                          <button type="submit" disabled={profileBusy} className="btn-primary text-xs flex-1 py-1.5">{profileBusy ? 'Saving...' : 'Save'}</button>
+                        </div>
+                      </form>
+                    ) : (
+                      <div className="flex items-center justify-between gap-2">
+                        <div>
+                          <div className="font-medium text-sm text-gray-900">{p.fullName}</div>
+                          <div className="text-xs text-gray-500">
+                            {p.age ? `Age ${p.age}` : ''}{p.age && p.classLevel ? ' · ' : ''}
+                            {p.classLevel ? CLASS_LEVELS.find(c => c.value === p.classLevel)?.label : ''}
+                          </div>
+                        </div>
+                        <div className="flex gap-1 flex-shrink-0">
+                          <button type="button" onClick={() => openEditProfile(p)}
+                            className="text-xs text-gray-500 hover:text-blue-600 px-2 py-1 rounded hover:bg-blue-50">✏️ Edit</button>
+                          <button type="button" onClick={() => handleDeleteProfile(p)} disabled={profileBusy}
+                            className="text-xs text-gray-400 hover:text-red-600 px-2 py-1 rounded hover:bg-red-50">🗑 Remove</button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+
+              <form onSubmit={handleAddProfile} className="space-y-2 bg-gray-50 rounded-lg p-3">
+                <label className="block text-xs font-medium text-gray-600">+ Add Another Student</label>
+                <input type="text" className="input text-sm" placeholder="Student's name" value={newProfile.fullName}
+                  onChange={e => setNewProfile(f => ({ ...f, fullName: e.target.value }))} />
+                <div className="flex gap-2">
+                  <input type="number" className="input text-sm" placeholder="Age" value={newProfile.age}
+                    onChange={e => setNewProfile(f => ({ ...f, age: e.target.value }))} />
+                  <select className="input text-sm" value={newProfile.classLevel}
+                    onChange={e => setNewProfile(f => ({ ...f, classLevel: e.target.value }))}>
+                    <option value="">Class: Not set</option>
+                    {CLASS_LEVELS.map(c => <option key={c.value} value={c.value}>{c.label}</option>)}
+                  </select>
+                </div>
+                <button type="submit" disabled={profileBusy} className="btn-primary text-xs w-full py-1.5">
+                  {profileBusy ? 'Adding...' : '+ Add Student'}
+                </button>
+              </form>
+            </div>
+          )}
         </Modal>
       )}
 
@@ -419,16 +551,16 @@ export function AdminUsersPage() {
             {error && <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700">{error}</div>}
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Select Student</label>
-              <select className="input" value={assignStudentId} onChange={e => setAssignStudentId(e.target.value)} required>
+              <select className="input" value={assignProfileId} onChange={e => setAssignProfileId(e.target.value)} required>
                 <option value="">Choose a student...</option>
-                {users.filter(u => u.role === 'student').map(s => (
-                  <option key={s.id} value={s.id}>{s.fullName} ({s.email})</option>
+                {studentProfileOptions.map(p => (
+                  <option key={p.id} value={p.id}>{p.fullName} ({p.accountEmail})</option>
                 ))}
               </select>
             </div>
             <div className="flex gap-3 pt-2">
               <button type="button" onClick={() => setAssignTeacher(null)} className="btn-secondary flex-1">Cancel</button>
-              <button type="submit" disabled={saving || !assignStudentId} className="btn-primary flex-1">
+              <button type="submit" disabled={saving || !assignProfileId} className="btn-primary flex-1">
                 {saving ? 'Assigning...' : 'Assign Student'}
               </button>
             </div>
@@ -496,7 +628,14 @@ export function TeacherStudentsPage() {
   const loadAllStudents = async () => {
     try {
       const { data } = await api.get('/users?role=student');
-      setAllStudents(data.users);
+      // Each student account may hold several child profiles — the picker
+      // needs to offer individual students, not accounts, since assignment
+      // is keyed by profile.
+      const flattened = data.users.flatMap(u =>
+        (u.profiles && u.profiles.length ? u.profiles : [{ id: u.id, fullName: u.fullName }])
+          .map(p => ({ ...p, email: u.email }))
+      );
+      setAllStudents(flattened);
     } catch {}
   };
 
@@ -764,21 +903,26 @@ export function AdminAnnouncementsPage() {
 
 // ── PROFILE ───────────────────────────────────────────────────────────────────
 export function ProfilePage() {
-  const { user, updateUser } = useAuthStore();
-  const [form, setForm] = useState({ fullName: user?.fullName || '', age: '', parentPhone: '', classLevel: '' });
+  const { user, updateUser, profiles, activeProfileId, reloadProfiles, switchProfile } = useAuthStore();
+  const [form, setForm] = useState({ fullName: user?.fullName || '', parentPhone: '' });
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState('');
   const [error, setError] = useState('');
+
+  // Per-child profile management (student accounts only)
+  const [newProfile, setNewProfile] = useState({ fullName: '', age: '', classLevel: '' });
+  const [profileBusy, setProfileBusy] = useState(false);
+  const [profileError, setProfileError] = useState('');
+  const [editingProfileId, setEditingProfileId] = useState(null);
+  const [editingProfileForm, setEditingProfileForm] = useState({ fullName: '', age: '', classLevel: '' });
 
   useEffect(() => {
     if (!user?.id) return;
     api.get(`/users/${user.id}`).then(({ data }) => {
       setForm({
         fullName: data.user.fullName || '',
-        age: data.user.age ?? '',
         parentPhone: data.user.parentPhone || '',
-        classLevel: data.user.classLevel || '',
       });
     }).finally(() => setLoading(false));
   }, [user?.id]);
@@ -787,13 +931,8 @@ export function ProfilePage() {
     e.preventDefault();
     setSaving(true); setError('');
     try {
-      // Only send fields that have real values — an empty string for age
-      // must not be sent as a number, and blank fields shouldn't wipe out
-      // existing data by accident.
       const payload = { fullName: form.fullName };
-      if (form.age !== '') payload.age = parseInt(form.age, 10);
-      if (form.parentPhone !== '') payload.parentPhone = form.parentPhone;
-      if (form.classLevel !== '') payload.classLevel = form.classLevel;
+      if (user?.role === 'student') payload.parentPhone = form.parentPhone;
 
       const { data } = await api.patch(`/users/${user.id}`, payload);
       updateUser({ fullName: data.user.fullName });
@@ -804,13 +943,68 @@ export function ProfilePage() {
     finally { setSaving(false); setTimeout(() => setMsg(''), 3000); }
   };
 
+  // ── MY STUDENTS (self-service: add/edit the children under this login) ─────
+  const handleAddProfile = async e => {
+    e.preventDefault();
+    if (!newProfile.fullName.trim()) { setProfileError('Please enter a name.'); return; }
+    setProfileBusy(true); setProfileError('');
+    try {
+      const payload = { fullName: newProfile.fullName };
+      if (newProfile.age !== '') payload.age = parseInt(newProfile.age, 10);
+      if (newProfile.classLevel !== '') payload.classLevel = newProfile.classLevel;
+      await api.post(`/users/${user.id}/profiles`, payload);
+      await reloadProfiles();
+      setNewProfile({ fullName: '', age: '', classLevel: '' });
+      setMsg('Student added successfully.');
+      setTimeout(() => setMsg(''), 3000);
+    } catch (err) { setProfileError(err.response?.data?.error?.message || 'Failed to add student.'); }
+    finally { setProfileBusy(false); }
+  };
+
+  const openEditProfile = p => {
+    setEditingProfileId(p.id);
+    setEditingProfileForm({ fullName: p.fullName, age: p.age ?? '', classLevel: p.classLevel || '' });
+    setProfileError('');
+  };
+
+  const handleSaveProfile = async e => {
+    e.preventDefault();
+    setProfileBusy(true); setProfileError('');
+    try {
+      const payload = { fullName: editingProfileForm.fullName };
+      payload.age = editingProfileForm.age === '' ? null : parseInt(editingProfileForm.age, 10);
+      payload.classLevel = editingProfileForm.classLevel === '' ? null : editingProfileForm.classLevel;
+      await api.patch(`/users/${user.id}/profiles/${editingProfileId}`, payload);
+      await reloadProfiles();
+      setEditingProfileId(null);
+    } catch (err) { setProfileError(err.response?.data?.error?.message || 'Failed to update student.'); }
+    finally { setProfileBusy(false); }
+  };
+
+  const handleDeleteProfile = async p => {
+    if (profiles.length <= 1) { setProfileError('You must keep at least one student profile.'); return; }
+    if (!confirm(`Remove "${p.fullName}"? Their progress, quizzes, and assignments will be removed too. This cannot be undone.`)) return;
+    setProfileBusy(true); setProfileError('');
+    try {
+      await api.delete(`/users/${user.id}/profiles/${p.id}`);
+      await reloadProfiles();
+      // If the profile that was just deleted was the active one, hop to
+      // whichever profile is left so the session stays valid.
+      if (p.id === activeProfileId) {
+        const remaining = profiles.filter(x => x.id !== p.id);
+        if (remaining[0]) { await switchProfile(remaining[0].id); window.location.href = '/dashboard'; return; }
+      }
+    } catch (err) { setProfileError(err.response?.data?.error?.message || 'Failed to remove student.'); }
+    finally { setProfileBusy(false); }
+  };
+
   return (
     <div className="p-6 max-w-lg mx-auto">
       <div className="mb-6">
         <h1 className="text-xl font-bold text-gray-900"><span className="font-tamil">சுயவிவரம்</span></h1>
         <p className="text-sm text-gray-500">Profile</p>
       </div>
-      <div className="card">
+      <div className="card mb-6">
         <div className="flex items-center gap-4 mb-6 pb-5 border-b border-gray-100">
           <div className="w-14 h-14 bg-primary-900 rounded-full flex items-center justify-center">
             <span className="text-white font-bold text-xl">{user?.fullName?.[0]}</span>
@@ -825,30 +1019,19 @@ export function ProfilePage() {
           <form onSubmit={handleSave} className="space-y-4">
             {error && <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700">{error}</div>}
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Full Name</label>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                {user?.role === 'student' ? 'Account Name (parent/guardian)' : 'Full Name'}
+              </label>
               <input type="text" className="input" value={form.fullName}
                 onChange={e => setForm(f => ({ ...f, fullName: e.target.value }))} required />
             </div>
-            {user?.role === 'student' && <>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Age</label>
-                <input type="number" className="input" value={form.age}
-                  onChange={e => setForm(f => ({ ...f, age: e.target.value }))} />
-              </div>
+            {user?.role === 'student' && (
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Parent Phone Number</label>
                 <input type="tel" className="input" value={form.parentPhone}
                   onChange={e => setForm(f => ({ ...f, parentPhone: e.target.value }))} />
               </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Class</label>
-                <select className="input" value={form.classLevel}
-                  onChange={e => setForm(f => ({ ...f, classLevel: e.target.value }))}>
-                  <option value="">Not set</option>
-                  {CLASS_LEVELS.map(c => <option key={c.value} value={c.value}>{c.label}</option>)}
-                </select>
-              </div>
-            </>}
+            )}
             {msg && <div className="p-3 bg-green-50 border border-green-200 rounded-lg text-sm text-green-700">{msg}</div>}
             <button type="submit" disabled={saving} className="btn-primary w-full">
               {saving ? 'Saving...' : 'Save Changes'}
@@ -856,6 +1039,82 @@ export function ProfilePage() {
           </form>
         )}
       </div>
+
+      {/* ── MY STUDENTS ──────────────────────────────────────────────────────── */}
+      {user?.role === 'student' && (
+        <div className="card">
+          <h2 className="font-semibold text-gray-800 mb-1 text-sm">My Students</h2>
+          <p className="text-xs text-gray-500 mb-3">
+            Everyone listed here can log in with this same email. Each student keeps their own separate progress and quiz results.
+          </p>
+          {profileError && <div className="p-3 mb-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700">{profileError}</div>}
+
+          <div className="space-y-2 mb-4">
+            {profiles.map(p => (
+              <div key={p.id} className="border border-gray-100 rounded-lg p-3">
+                {editingProfileId === p.id ? (
+                  <form onSubmit={handleSaveProfile} className="space-y-2">
+                    <input type="text" className="input text-sm" value={editingProfileForm.fullName}
+                      onChange={e => setEditingProfileForm(f => ({ ...f, fullName: e.target.value }))} required />
+                    <div className="flex gap-2">
+                      <input type="number" className="input text-sm" placeholder="Age" value={editingProfileForm.age}
+                        onChange={e => setEditingProfileForm(f => ({ ...f, age: e.target.value }))} />
+                      <select className="input text-sm" value={editingProfileForm.classLevel}
+                        onChange={e => setEditingProfileForm(f => ({ ...f, classLevel: e.target.value }))}>
+                        <option value="">Class: Not set</option>
+                        {CLASS_LEVELS.map(c => <option key={c.value} value={c.value}>{c.label}</option>)}
+                      </select>
+                    </div>
+                    <div className="flex gap-2">
+                      <button type="button" onClick={() => setEditingProfileId(null)} className="btn-secondary text-xs flex-1 py-1.5">Cancel</button>
+                      <button type="submit" disabled={profileBusy} className="btn-primary text-xs flex-1 py-1.5">{profileBusy ? 'Saving...' : 'Save'}</button>
+                    </div>
+                  </form>
+                ) : (
+                  <div className="flex items-center justify-between gap-2">
+                    <div>
+                      <div className="font-medium text-sm text-gray-900 flex items-center gap-2">
+                        {p.fullName}
+                        {p.id === activeProfileId && (
+                          <span className="text-xs px-2 py-0.5 rounded-full bg-primary-100 text-primary-800">Currently viewing</span>
+                        )}
+                      </div>
+                      <div className="text-xs text-gray-500">
+                        {p.age ? `Age ${p.age}` : ''}{p.age && p.classLevel ? ' · ' : ''}
+                        {p.classLevel ? CLASS_LEVELS.find(c => c.value === p.classLevel)?.label : ''}
+                      </div>
+                    </div>
+                    <div className="flex gap-1 flex-shrink-0">
+                      <button type="button" onClick={() => openEditProfile(p)}
+                        className="text-xs text-gray-500 hover:text-blue-600 px-2 py-1 rounded hover:bg-blue-50">✏️ Edit</button>
+                      <button type="button" onClick={() => handleDeleteProfile(p)} disabled={profileBusy}
+                        className="text-xs text-gray-400 hover:text-red-600 px-2 py-1 rounded hover:bg-red-50">🗑 Remove</button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+
+          <form onSubmit={handleAddProfile} className="space-y-2 bg-gray-50 rounded-lg p-3">
+            <label className="block text-xs font-medium text-gray-600">+ Add Another Student</label>
+            <input type="text" className="input text-sm" placeholder="Student's name" value={newProfile.fullName}
+              onChange={e => setNewProfile(f => ({ ...f, fullName: e.target.value }))} />
+            <div className="flex gap-2">
+              <input type="number" className="input text-sm" placeholder="Age" value={newProfile.age}
+                onChange={e => setNewProfile(f => ({ ...f, age: e.target.value }))} />
+              <select className="input text-sm" value={newProfile.classLevel}
+                onChange={e => setNewProfile(f => ({ ...f, classLevel: e.target.value }))}>
+                <option value="">Class: Not set</option>
+                {CLASS_LEVELS.map(c => <option key={c.value} value={c.value}>{c.label}</option>)}
+              </select>
+            </div>
+            <button type="submit" disabled={profileBusy} className="btn-primary text-xs w-full py-1.5">
+              {profileBusy ? 'Adding...' : '+ Add Student'}
+            </button>
+          </form>
+        </div>
+      )}
     </div>
   );
 }

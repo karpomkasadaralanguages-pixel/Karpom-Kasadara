@@ -21,7 +21,11 @@ async function requireAuth(req, res, next) {
     if (!user) return res.status(401).json({ error: { code: 'UNAUTHORIZED', message: 'User not found.' } });
     if (user.status === 'suspended') return res.status(403).json({ error: { code: 'SUSPENDED', message: 'Account suspended.' } });
 
-    req.user = user;
+    // profileId identifies which student profile (child) is active for this
+    // token — only meaningful when role === 'student'. Everything student-scoped
+    // (progress, bookmarks, notes, assignments, quiz attempts) keys off this,
+    // not off the account id, so siblings sharing one login stay fully separate.
+    req.user = { ...user, profileId: user.role === 'student' ? (payload.profileId || null) : null };
     next();
   } catch (err) {
     if (err.name === 'TokenExpiredError') {
@@ -69,8 +73,12 @@ async function requireAssignment(req, res, next) {
   try {
     if (['admin', 'teacher'].includes(req.user.role)) return next();
 
+    if (!req.user.profileId) {
+      return res.status(403).json({ error: { code: 'NO_PROFILE', message: 'No active student profile.' } });
+    }
+
     const assignment = await prisma.contentAssignment.findUnique({
-      where: { contentId_studentId: { contentId: req.params.id, studentId: req.user.id } }
+      where: { contentId_studentId: { contentId: req.params.id, studentId: req.user.profileId } }
     });
     if (!assignment) {
       return res.status(403).json({ error: { code: 'NOT_ASSIGNED', message: 'This content has not been assigned to you.' } });

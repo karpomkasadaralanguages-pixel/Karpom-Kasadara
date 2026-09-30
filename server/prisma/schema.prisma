@@ -81,28 +81,54 @@ model User {
   invitedBy        User?              @relation("InvitedBy", fields: [invitedById], references: [id])
   invitedUsers     User[]             @relation("InvitedBy")
   uploadedContent  Content[]          @relation("UploadedBy")
-  assignments      ContentAssignment[] @relation("AssignedTo")
   assignedBy       ContentAssignment[] @relation("AssignedBy")
   teacherStudents  TeacherStudent[]   @relation("TeacherRelation")
-  studentTeachers  TeacherStudent[]   @relation("StudentRelation")
-  progress         Progress[]
-  bookmarks        Bookmark[]
-  notes            Note[]
   quizzes          Quiz[]             @relation("QuizCreator")
-  quizAttempts     QuizAttempt[]
   refreshTokens    RefreshToken[]
   passwordResets   PasswordReset[]
   contentSharedWithMe ContentTeacherShare[] @relation("ContentSharedWithTeacher")
+  // Each student account can have multiple student profiles (siblings) under one login.
+  // For teacher/admin accounts this is simply empty.
+  studentProfiles  StudentProfile[]   @relation("AccountProfiles")
 
   @@map("users")
 }
 
+// A single child under a student account's login. A student account (User with
+// role=student) can have more than one profile (e.g. siblings sharing one email
+// + password). All per-student learning data (assignments, progress, bookmarks,
+// notes, quiz attempts, teacher links) hangs off the profile, not the account,
+// so each child's data stays fully separate even when they share a login.
+model StudentProfile {
+  id         String      @id @default(uuid())
+  accountId  String      @map("account_id")
+  fullName   String      @map("full_name")
+  age        Int?
+  classLevel ClassLevel? @map("class_level")
+  createdAt  DateTime    @default(now()) @map("created_at")
+  deletedAt  DateTime?   @map("deleted_at")
+
+  account         User                @relation("AccountProfiles", fields: [accountId], references: [id], onDelete: Cascade)
+  assignments     ContentAssignment[] @relation("AssignedTo")
+  teacherLinks    TeacherStudent[]    @relation("StudentRelation")
+  progress        Progress[]
+  bookmarks       Bookmark[]
+  notes           Note[]
+  quizAttempts    QuizAttempt[]
+
+  @@map("student_profiles")
+}
+
 model RefreshToken {
-  id        String   @id @default(uuid())
-  userId    String   @map("user_id")
-  token     String   @unique
-  expiresAt DateTime @map("expires_at")
-  createdAt DateTime @default(now()) @map("created_at")
+  id              String   @id @default(uuid())
+  userId          String   @map("user_id")
+  // Which student profile was active when this refresh token was issued (student
+  // accounts only) — carried forward on /refresh so the active profile "sticks"
+  // across token renewals until the user explicitly switches.
+  activeProfileId String?  @map("active_profile_id")
+  token           String   @unique
+  expiresAt       DateTime @map("expires_at")
+  createdAt       DateTime @default(now()) @map("created_at")
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
@@ -183,9 +209,9 @@ model ContentAssignment {
   assignedById String  @map("assigned_by")
   assignedAt  DateTime @default(now()) @map("assigned_at")
 
-  content    Content @relation(fields: [contentId], references: [id], onDelete: Cascade)
-  student    User    @relation("AssignedTo", fields: [studentId], references: [id], onDelete: Cascade)
-  assignedBy User    @relation("AssignedBy", fields: [assignedById], references: [id])
+  content    Content        @relation(fields: [contentId], references: [id], onDelete: Cascade)
+  student    StudentProfile @relation("AssignedTo", fields: [studentId], references: [id], onDelete: Cascade)
+  assignedBy User           @relation("AssignedBy", fields: [assignedById], references: [id])
 
   @@unique([contentId, studentId])
   @@map("content_assignments")
@@ -197,8 +223,8 @@ model TeacherStudent {
   studentId  String   @map("student_id")
   assignedAt DateTime @default(now()) @map("assigned_at")
 
-  teacher User @relation("TeacherRelation", fields: [teacherId], references: [id], onDelete: Cascade)
-  student User @relation("StudentRelation", fields: [studentId], references: [id], onDelete: Cascade)
+  teacher User           @relation("TeacherRelation", fields: [teacherId], references: [id], onDelete: Cascade)
+  student StudentProfile @relation("StudentRelation", fields: [studentId], references: [id], onDelete: Cascade)
 
   @@unique([teacherId, studentId])
   @@map("teacher_students")
@@ -206,45 +232,45 @@ model TeacherStudent {
 
 model Progress {
   id              String   @id @default(uuid())
-  userId          String   @map("user_id")
+  profileId       String   @map("profile_id")
   contentId       String   @map("content_id")
   lastPageViewed  Int      @default(1) @map("last_page_viewed")
   pagesViewed     Int[]    @default([]) @map("pages_viewed")
   percentComplete Float    @default(0) @map("percent_complete")
   lastAccessedAt  DateTime @default(now()) @map("last_accessed_at")
 
-  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
-  content Content @relation(fields: [contentId], references: [id], onDelete: Cascade)
+  profile StudentProfile @relation(fields: [profileId], references: [id], onDelete: Cascade)
+  content Content        @relation(fields: [contentId], references: [id], onDelete: Cascade)
 
-  @@unique([userId, contentId])
+  @@unique([profileId, contentId])
   @@map("progress")
 }
 
 model Bookmark {
   id        String   @id @default(uuid())
-  userId    String   @map("user_id")
+  profileId String   @map("profile_id")
   contentId String   @map("content_id")
   createdAt DateTime @default(now()) @map("created_at")
 
-  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
-  content Content @relation(fields: [contentId], references: [id], onDelete: Cascade)
+  profile StudentProfile @relation(fields: [profileId], references: [id], onDelete: Cascade)
+  content Content        @relation(fields: [contentId], references: [id], onDelete: Cascade)
 
-  @@unique([userId, contentId])
+  @@unique([profileId, contentId])
   @@map("bookmarks")
 }
 
 model Note {
   id        String   @id @default(uuid())
-  userId    String   @map("user_id")
+  profileId String   @map("profile_id")
   contentId String   @map("content_id")
   body      String
   updatedAt DateTime @updatedAt @map("updated_at")
   createdAt DateTime @default(now()) @map("created_at")
 
-  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
-  content Content @relation(fields: [contentId], references: [id], onDelete: Cascade)
+  profile StudentProfile @relation(fields: [profileId], references: [id], onDelete: Cascade)
+  content Content        @relation(fields: [contentId], references: [id], onDelete: Cascade)
 
-  @@unique([userId, contentId])
+  @@unique([profileId, contentId])
   @@map("notes")
 }
 
@@ -281,13 +307,13 @@ model QuizQuestion {
 model QuizAttempt {
   id          String   @id @default(uuid())
   quizId      String   @map("quiz_id")
-  userId      String   @map("user_id")
+  profileId   String   @map("profile_id")
   answers     Json
   score       Float
   completedAt DateTime @default(now()) @map("completed_at")
 
-  quiz Quiz @relation(fields: [quizId], references: [id])
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  quiz    Quiz           @relation(fields: [quizId], references: [id])
+  profile StudentProfile @relation(fields: [profileId], references: [id], onDelete: Cascade)
 
   @@map("quiz_attempts")
 }

@@ -16,19 +16,37 @@ const resetLimiter = rateLimit({ windowMs: 60 * 60 * 1000, max: 3,
   message: { error: { code: 'RATE_LIMIT', message: 'Too many reset requests. Try again in an hour.' } } });
 
 // ── TOKEN HELPERS ─────────────────────────────────────────────────────────────
-function generateAccessToken(user) {
+// profileId is only meaningful for role==='student' — which of that account's
+// student profiles (children) is currently active. Null for admin/teacher.
+function generateAccessToken(user, profileId = null) {
   return jwt.sign(
-    { sub: user.id, role: user.role },
+    { sub: user.id, role: user.role, profileId },
     process.env.JWT_SECRET,
     { expiresIn: '15m' }
   );
 }
 
-async function generateRefreshToken(userId) {
+async function generateRefreshToken(userId, activeProfileId = null) {
   const token = uuidv4();
   const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000); // 7 days
-  await prisma.refreshToken.create({ data: { userId, token, expiresAt } });
+  await prisma.refreshToken.create({ data: { userId, token, expiresAt, activeProfileId } });
   return token;
+}
+
+function profileSummary(p) {
+  return { id: p.id, fullName: p.fullName, age: p.age, classLevel: p.classLevel };
+}
+
+// Fetches this account's profiles and picks the active one: the one carried
+// over from a previous session (preferredProfileId) if it still exists,
+// otherwise the earliest-created profile. Returns { profiles, activeProfileId }.
+async function loadProfiles(userId, preferredProfileId = null) {
+  const profiles = await prisma.studentProfile.findMany({
+    where: { accountId: userId, deletedAt: null },
+    orderBy: { createdAt: 'asc' },
+  });
+  const active = profiles.find(p => p.id === preferredProfileId) || profiles[0] || null;
+  return { profiles, activeProfileId: active?.id || null };
 }
 
 // ── POST /login ───────────────────────────────────────────────────────────────
@@ -48,8 +66,19 @@ router.post('/login', async (req, res, next) => {
 
     await prisma.user.update({ where: { id: user.id }, data: { lastLoginAt: new Date() } });
 
-    const accessToken = generateAccessToken(user);
-    const refreshToken = await generateRefreshToken(user.id);
+    let profiles = [];
+    let activeProfileId = null;
+    if (user.role === 'student') {
+      ({ profiles, activeProfileId } = await loadProfiles(user.id));
+      if (!activeProfileId) {
+        // Shouldn't normally happen (every student account gets a profile on
+        // creation/migration) — surface a clear error instead of a broken session.
+        return res.status(500).json({ error: { code: 'NO_PROFILE', message: 'This account has no student profile set up. Please contact an admin.' } });
+      }
+    }
+
+    const accessToken = generateAccessToken(user, activeProfileId);
+    const refreshToken = await generateRefreshToken(user.id, activeProfileId);
 
     res.cookie('refreshToken', refreshToken, {
       httpOnly: true, secure: process.env.NODE_ENV === 'production',
@@ -58,7 +87,11 @@ router.post('/login', async (req, res, next) => {
 
     res.json({
       accessToken,
-      user: { id: user.id, role: user.role, fullName: user.fullName, email: user.email }
+      user: { id: user.id, role: user.role, fullName: user.fullName, email: user.email },
+      ...(user.role === 'student' && {
+        profiles: profiles.map(profileSummary),
+        activeProfileId,
+      }),
     });
   } catch (err) {
     if (err.name === 'ZodError') return res.status(400).json({ error: { code: 'VALIDATION', message: err.errors[0].message } });
@@ -77,10 +110,10 @@ router.post('/refresh', async (req, res, next) => {
       return res.status(401).json({ error: { code: 'INVALID_REFRESH_TOKEN', message: 'Invalid or expired refresh token.' } });
     }
 
-    // Rotate token
+    // Rotate token, carrying the active profile forward unchanged.
     await prisma.refreshToken.delete({ where: { id: stored.id } });
-    const newRefreshToken = await generateRefreshToken(stored.userId);
-    const accessToken = generateAccessToken(stored.user);
+    const newRefreshToken = await generateRefreshToken(stored.userId, stored.activeProfileId);
+    const accessToken = generateAccessToken(stored.user, stored.activeProfileId);
 
     res.cookie('refreshToken', newRefreshToken, {
       httpOnly: true, secure: process.env.NODE_ENV === 'production',
@@ -89,6 +122,38 @@ router.post('/refresh', async (req, res, next) => {
 
     res.json({ accessToken });
   } catch (err) { next(err); }
+});
+
+// ── POST /switch-profile — switch active child profile, no re-auth needed ──────
+router.post('/switch-profile', requireAuth, async (req, res, next) => {
+  try {
+    if (req.user.role !== 'student') {
+      return res.status(403).json({ error: { code: 'FORBIDDEN', message: 'Only student accounts have profiles to switch.' } });
+    }
+
+    const { profileId } = z.object({ profileId: z.string().uuid() }).parse(req.body);
+
+    const profile = await prisma.studentProfile.findFirst({
+      where: { id: profileId, accountId: req.user.id, deletedAt: null },
+    });
+    if (!profile) return res.status(404).json({ error: { code: 'NOT_FOUND', message: 'Profile not found on this account.' } });
+
+    // Rotate the refresh token so the new active profile "sticks" across renewals.
+    const oldToken = req.cookies?.refreshToken;
+    if (oldToken) await prisma.refreshToken.deleteMany({ where: { token: oldToken } });
+    const newRefreshToken = await generateRefreshToken(req.user.id, profile.id);
+    const accessToken = generateAccessToken(req.user, profile.id);
+
+    res.cookie('refreshToken', newRefreshToken, {
+      httpOnly: true, secure: process.env.NODE_ENV === 'production',
+      sameSite: 'strict', maxAge: 7 * 24 * 60 * 60 * 1000,
+    });
+
+    res.json({ accessToken, activeProfile: profileSummary(profile) });
+  } catch (err) {
+    if (err.name === 'ZodError') return res.status(400).json({ error: { code: 'VALIDATION', message: err.errors[0].message } });
+    next(err);
+  }
 });
 
 // ── POST /logout ──────────────────────────────────────────────────────────────
@@ -117,20 +182,33 @@ router.post('/register', async (req, res, next) => {
     if (existing) return res.status(409).json({ error: { code: 'EMAIL_TAKEN', message: 'An account with this email already exists.' } });
 
     const passwordHash = await bcrypt.hash(data.password, 12);
-    const user = await prisma.user.create({
-      data: {
-        role: 'student',
-        fullName: data.fullName,
-        email: data.email.toLowerCase(),
-        passwordHash,
-        age: data.age,
-        parentPhone: data.parentPhone,
-        classLevel: data.classLevel,
-      }
+
+    // Create the login account plus its first student profile together. This
+    // account's email/password is the shared login; siblings can be added as
+    // additional profiles later from the account's own settings or by an admin.
+    const { user, profile } = await prisma.$transaction(async tx => {
+      const user = await tx.user.create({
+        data: {
+          role: 'student',
+          fullName: data.fullName,
+          email: data.email.toLowerCase(),
+          passwordHash,
+          parentPhone: data.parentPhone,
+        }
+      });
+      const profile = await tx.studentProfile.create({
+        data: {
+          accountId: user.id,
+          fullName: data.fullName,
+          age: data.age,
+          classLevel: data.classLevel,
+        }
+      });
+      return { user, profile };
     });
 
-    const accessToken = generateAccessToken(user);
-    const refreshToken = await generateRefreshToken(user.id);
+    const accessToken = generateAccessToken(user, profile.id);
+    const refreshToken = await generateRefreshToken(user.id, profile.id);
 
     res.cookie('refreshToken', refreshToken, {
       httpOnly: true, secure: process.env.NODE_ENV === 'production',
@@ -139,7 +217,9 @@ router.post('/register', async (req, res, next) => {
 
     res.status(201).json({
       accessToken,
-      user: { id: user.id, role: user.role, fullName: user.fullName, email: user.email }
+      user: { id: user.id, role: user.role, fullName: user.fullName, email: user.email },
+      profiles: [profileSummary(profile)],
+      activeProfileId: profile.id,
     });
   } catch (err) {
     if (err.name === 'ZodError') return res.status(400).json({ error: { code: 'VALIDATION', message: err.errors[0].message } });

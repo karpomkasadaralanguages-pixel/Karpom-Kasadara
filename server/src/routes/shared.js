@@ -4,7 +4,16 @@ const { z } = require('zod');
 const prisma = require('../config/prisma');
 const { requireAuth, requireRole } = require('../middleware/auth');
 
-progressRouter.patch('/:contentId', requireAuth, async (req, res, next) => {
+// Progress/bookmarks/notes are per student profile, not per account — so a
+// parent account with several children keeps each child's data separate.
+function requireProfile(req, res, next) {
+  if (req.user.role !== 'student' || !req.user.profileId) {
+    return res.status(403).json({ error: { code: 'NO_PROFILE', message: 'This requires an active student profile.' } });
+  }
+  next();
+}
+
+progressRouter.patch('/:contentId', requireAuth, requireProfile, async (req, res, next) => {
   try {
     const { lastPageViewed, pagesViewed, pageCount } = z.object({
       lastPageViewed: z.number().int().min(1),
@@ -16,8 +25,8 @@ progressRouter.patch('/:contentId', requireAuth, async (req, res, next) => {
     const percentComplete = Math.min(100, (uniquePages.length / pageCount) * 100);
 
     const progress = await prisma.progress.upsert({
-      where: { userId_contentId: { userId: req.user.id, contentId: req.params.contentId } },
-      create: { userId: req.user.id, contentId: req.params.contentId, lastPageViewed, pagesViewed: uniquePages, percentComplete, lastAccessedAt: new Date() },
+      where: { profileId_contentId: { profileId: req.user.profileId, contentId: req.params.contentId } },
+      create: { profileId: req.user.profileId, contentId: req.params.contentId, lastPageViewed, pagesViewed: uniquePages, percentComplete, lastAccessedAt: new Date() },
       update: { lastPageViewed, pagesViewed: uniquePages, percentComplete, lastAccessedAt: new Date() },
     });
 
@@ -31,10 +40,10 @@ progressRouter.patch('/:contentId', requireAuth, async (req, res, next) => {
 // ── BOOKMARKS ─────────────────────────────────────────────────────────────────
 const bookmarkRouter = require('express').Router();
 
-bookmarkRouter.get('/', requireAuth, async (req, res, next) => {
+bookmarkRouter.get('/', requireAuth, requireProfile, async (req, res, next) => {
   try {
     const bookmarks = await prisma.bookmark.findMany({
-      where: { userId: req.user.id },
+      where: { profileId: req.user.profileId },
       include: { content: { select: { id: true, title: true, category: true, difficulty: true } } },
       orderBy: { createdAt: 'desc' }
     });
@@ -42,10 +51,10 @@ bookmarkRouter.get('/', requireAuth, async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
-bookmarkRouter.post('/', requireAuth, async (req, res, next) => {
+bookmarkRouter.post('/', requireAuth, requireProfile, async (req, res, next) => {
   try {
     const { contentId } = z.object({ contentId: z.string().uuid() }).parse(req.body);
-    const bookmark = await prisma.bookmark.create({ data: { userId: req.user.id, contentId } });
+    const bookmark = await prisma.bookmark.create({ data: { profileId: req.user.profileId, contentId } });
     res.status(201).json({ bookmark });
   } catch (err) {
     if (err.name === 'ZodError') return res.status(400).json({ error: { code: 'VALIDATION', message: err.errors[0].message } });
@@ -53,9 +62,9 @@ bookmarkRouter.post('/', requireAuth, async (req, res, next) => {
   }
 });
 
-bookmarkRouter.delete('/:id', requireAuth, async (req, res, next) => {
+bookmarkRouter.delete('/:id', requireAuth, requireProfile, async (req, res, next) => {
   try {
-    await prisma.bookmark.deleteMany({ where: { id: req.params.id, userId: req.user.id } });
+    await prisma.bookmark.deleteMany({ where: { id: req.params.id, profileId: req.user.profileId } });
     res.json({ message: 'Bookmark removed.' });
   } catch (err) { next(err); }
 });
@@ -63,21 +72,21 @@ bookmarkRouter.delete('/:id', requireAuth, async (req, res, next) => {
 // ── NOTES ─────────────────────────────────────────────────────────────────────
 const noteRouter = require('express').Router();
 
-noteRouter.get('/:contentId', requireAuth, async (req, res, next) => {
+noteRouter.get('/:contentId', requireAuth, requireProfile, async (req, res, next) => {
   try {
     const note = await prisma.note.findUnique({
-      where: { userId_contentId: { userId: req.user.id, contentId: req.params.contentId } }
+      where: { profileId_contentId: { profileId: req.user.profileId, contentId: req.params.contentId } }
     });
     res.json({ note: note || null });
   } catch (err) { next(err); }
 });
 
-noteRouter.put('/:contentId', requireAuth, async (req, res, next) => {
+noteRouter.put('/:contentId', requireAuth, requireProfile, async (req, res, next) => {
   try {
     const { body } = z.object({ body: z.string().max(10000) }).parse(req.body);
     const note = await prisma.note.upsert({
-      where: { userId_contentId: { userId: req.user.id, contentId: req.params.contentId } },
-      create: { userId: req.user.id, contentId: req.params.contentId, body },
+      where: { profileId_contentId: { profileId: req.user.profileId, contentId: req.params.contentId } },
+      create: { profileId: req.user.profileId, contentId: req.params.contentId, body },
       update: { body },
     });
     res.json({ note });

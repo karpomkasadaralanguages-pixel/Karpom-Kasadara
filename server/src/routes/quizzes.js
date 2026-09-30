@@ -9,7 +9,8 @@ router.get('/', requireAuth, async (req, res, next) => {
     const where = { deletedAt: null };
     if (req.user.role === 'teacher') where.createdById = req.user.id;
     if (req.user.role === 'student') {
-      const assignments = await prisma.contentAssignment.findMany({ where: { studentId: req.user.id }, select: { contentId: true } });
+      if (!req.user.profileId) { res.json({ quizzes: [] }); return; }
+      const assignments = await prisma.contentAssignment.findMany({ where: { studentId: req.user.profileId }, select: { contentId: true } });
       where.contentId = { in: assignments.map(a => a.contentId) };
     }
 
@@ -74,6 +75,9 @@ router.get('/:id', requireAuth, async (req, res, next) => {
 // ── POST /quizzes/:id/attempt — student submits answers ───────────────────────
 router.post('/:id/attempt', requireAuth, requireRole('student'), async (req, res, next) => {
   try {
+    if (!req.user.profileId) {
+      return res.status(403).json({ error: { code: 'NO_PROFILE', message: 'No active student profile.' } });
+    }
     const { answers } = z.object({ answers: z.record(z.string()) }).parse(req.body);
 
     const quiz = await prisma.quiz.findUnique({
@@ -90,7 +94,7 @@ router.post('/:id/attempt', requireAuth, requireRole('student'), async (req, res
     const score = quiz.questions.length > 0 ? (correct / quiz.questions.length) * 100 : 0;
 
     const attempt = await prisma.quizAttempt.create({
-      data: { quizId: quiz.id, userId: req.user.id, answers, score }
+      data: { quizId: quiz.id, profileId: req.user.profileId, answers, score }
     });
 
     res.status(201).json({ attempt: { id: attempt.id, score, correct, total: quiz.questions.length } });
@@ -105,7 +109,7 @@ router.get('/:id/results', requireAuth, requireRole('admin', 'teacher'), async (
   try {
     const attempts = await prisma.quizAttempt.findMany({
       where: { quizId: req.params.id },
-      include: { user: { select: { id: true, fullName: true, email: true } } },
+      include: { profile: { select: { id: true, fullName: true, account: { select: { email: true } } } } },
       orderBy: { completedAt: 'desc' }
     });
     res.json({ attempts });

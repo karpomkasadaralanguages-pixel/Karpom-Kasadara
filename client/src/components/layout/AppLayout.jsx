@@ -25,15 +25,27 @@ const NAV = {
 };
 
 export default function AppLayout() {
-  const { user, logout } = useAuthStore();
+  const { user, logout, profiles, activeProfileId, switchProfile } = useAuthStore();
   const navigate = useNavigate();
   const [mobileOpen, setMobileOpen] = useState(false);
+  const [switching, setSwitching] = useState(false);
 
   const navItems = NAV[user?.role] || NAV.student;
+  const activeProfile = profiles.find(p => p.id === activeProfileId);
 
   const handleLogout = async () => {
     await logout();
     navigate('/login');
+  };
+
+  const handleSwitchProfile = async e => {
+    const profileId = e.target.value;
+    if (!profileId || profileId === activeProfileId) return;
+    setSwitching(true);
+    try {
+      await switchProfile(profileId);
+      window.location.href = '/dashboard';
+    } finally { setSwitching(false); }
   };
 
   const Sidebar = () => (
@@ -53,8 +65,33 @@ export default function AppLayout() {
 
       {/* User info */}
       <div className="px-4 py-3 border-b border-primary-700 bg-primary-800">
-        <div className="text-sm font-semibold truncate">{user?.fullName}</div>
-        <div className="text-primary-300 text-xs capitalize">{user?.role}</div>
+        {user?.role === 'student' && activeProfile ? (
+          <>
+            <div className="text-sm font-semibold truncate">{activeProfile.fullName}</div>
+            <div className="text-primary-300 text-xs truncate">{user?.email}</div>
+          </>
+        ) : (
+          <>
+            <div className="text-sm font-semibold truncate">{user?.fullName}</div>
+            <div className="text-primary-300 text-xs capitalize">{user?.role}</div>
+          </>
+        )}
+
+        {/* Profile switcher — only shown when this account has more than one child */}
+        {user?.role === 'student' && profiles.length > 1 && (
+          <select
+            value={activeProfileId || ''}
+            onChange={handleSwitchProfile}
+            disabled={switching}
+            className="mt-2 w-full text-xs bg-primary-900 border border-primary-600 rounded-md px-2 py-1.5 text-white"
+          >
+            {profiles.map(p => (
+              <option key={p.id} value={p.id}>
+                {switching && p.id === activeProfileId ? 'Switching…' : `Switch to: ${p.fullName}`}
+              </option>
+            ))}
+          </select>
+        )}
       </div>
 
       {/* Nav links */}
