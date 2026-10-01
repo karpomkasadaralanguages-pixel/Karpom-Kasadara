@@ -47,6 +47,8 @@ export function AdminUsersPage() {
   const [createForm, setCreateForm] = useState({ role: 'student', fullName: '', email: '', password: '', age: '', parentPhone: '', classLevel: '' });
   const [editForm, setEditForm] = useState({ fullName: '', email: '', parentPhone: '' });
   const [resetForm, setResetForm] = useState({ password: '', confirm: '' });
+  const [resetMode, setResetMode] = useState('generate'); // 'generate' | 'manual'
+  const [generatedPassword, setGeneratedPassword] = useState('');
   const [transferTo, setTransferTo] = useState('');
   const [assignTeacher, setAssignTeacher] = useState(null);
   const [assignProfileId, setAssignProfileId] = useState('');
@@ -182,17 +184,32 @@ export function AdminUsersPage() {
   };
 
   // ── RESET PASSWORD ─────────────────────────────────────────────────────────
-  const openReset = u => { setResetUser(u); setResetForm({ password: '', confirm: '' }); setError(''); };
+  const openReset = u => {
+    setResetUser(u);
+    setResetForm({ password: '', confirm: '' });
+    setResetMode('generate');
+    setGeneratedPassword('');
+    setError('');
+  };
 
   const handleReset = async e => {
     e.preventDefault();
-    if (resetForm.password !== resetForm.confirm) { setError('Passwords do not match.'); return; }
-    if (resetForm.password.length < 8) { setError('Password must be at least 8 characters.'); return; }
+    if (resetMode === 'manual') {
+      if (resetForm.password !== resetForm.confirm) { setError('Passwords do not match.'); return; }
+      if (resetForm.password.length < 8) { setError('Password must be at least 8 characters.'); return; }
+    }
     setSaving(true); setError('');
     try {
-      await api.post(`/users/${resetUser.id}/reset-password`, { newPassword: resetForm.password });
-      setResetUser(null);
-      showSuccess(`Password reset for ${resetUser.fullName}.`);
+      const { data } = await api.post(`/users/${resetUser.id}/reset-password`,
+        resetMode === 'manual' ? { newPassword: resetForm.password } : {});
+      if (data.generatedPassword) {
+        // Show it once, right here — the server never stores or logs the
+        // plaintext, so this is the only chance to see or copy it.
+        setGeneratedPassword(data.generatedPassword);
+      } else {
+        setResetUser(null);
+        showSuccess(`Password reset for ${resetUser.fullName}.`);
+      }
     } catch (err) { setError(err.response?.data?.error?.message || 'Failed to reset password.'); }
     finally { setSaving(false); }
   };
@@ -516,27 +533,83 @@ export function AdminUsersPage() {
       {/* ── RESET PASSWORD MODAL ─────────────────────────────────────────────── */}
       {resetUser && (
         <Modal title={`Reset Password — ${resetUser.fullName}`} onClose={() => setResetUser(null)}>
-          <p className="text-sm text-gray-500 mb-4">
-            Set a new password for <strong>{resetUser.fullName}</strong> ({resetUser.email}).
-            They will need to use this new password to log in.
-          </p>
-          <form onSubmit={handleReset} className="space-y-4">
-            {error && <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700">{error}</div>}
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">New Password</label>
-              <input type="password" className="input" minLength={8} placeholder="Minimum 8 characters"
-                value={resetForm.password} onChange={e => setResetForm(f => ({ ...f, password: e.target.value }))} required />
+          {generatedPassword ? (
+            // One-time reveal: this is the only moment this password is ever
+            // visible — it's hashed before this response is even sent, and
+            // nothing in the system can show it again after this modal closes.
+            <div className="space-y-4">
+              <div className="p-3 bg-amber-50 border border-amber-200 rounded-lg text-sm text-amber-800">
+                ⚠️ Copy this now — it won't be shown again. Share it with {resetUser.fullName} or their parent.
+              </div>
+              <div className="flex items-center gap-2">
+                <code className="flex-1 text-lg font-mono tracking-wide bg-gray-100 border border-gray-200 rounded-lg px-4 py-3 text-center text-gray-900">
+                  {generatedPassword}
+                </code>
+                <button
+                  type="button"
+                  onClick={() => navigator.clipboard?.writeText(generatedPassword)}
+                  className="btn-secondary py-3 px-3"
+                  title="Copy to clipboard"
+                >
+                  📋
+                </button>
+              </div>
+              <button
+                type="button"
+                onClick={() => { setResetUser(null); showSuccess(`Password reset for ${resetUser.fullName}.`); }}
+                className="btn-primary w-full"
+              >
+                Done
+              </button>
             </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Confirm Password</label>
-              <input type="password" className="input"
-                value={resetForm.confirm} onChange={e => setResetForm(f => ({ ...f, confirm: e.target.value }))} required />
-            </div>
-            <div className="flex gap-3 pt-2">
-              <button type="button" onClick={() => setResetUser(null)} className="btn-secondary flex-1">Cancel</button>
-              <button type="submit" disabled={saving} className="btn-primary flex-1">{saving ? 'Resetting...' : 'Reset Password'}</button>
-            </div>
-          </form>
+          ) : (
+            <>
+              <p className="text-sm text-gray-500 mb-4">
+                Set a new password for <strong>{resetUser.fullName}</strong> ({resetUser.email}).
+                They will need to use this new password to log in. Nobody — including admins — can see
+                their current password; it's one-way encrypted and can only be replaced, not revealed.
+              </p>
+
+              <div className="flex gap-2 mb-4">
+                <button type="button" onClick={() => setResetMode('generate')}
+                  className={`flex-1 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${resetMode === 'generate' ? 'bg-primary-800 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}>
+                  🎲 Generate for me
+                </button>
+                <button type="button" onClick={() => setResetMode('manual')}
+                  className={`flex-1 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${resetMode === 'manual' ? 'bg-primary-800 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}>
+                  ✏️ Type my own
+                </button>
+              </div>
+
+              <form onSubmit={handleReset} className="space-y-4">
+                {error && <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700">{error}</div>}
+                {resetMode === 'generate' ? (
+                  <p className="text-xs text-gray-500">
+                    A secure, easy-to-read password will be created and shown to you once you click below.
+                  </p>
+                ) : (
+                  <>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">New Password</label>
+                      <input type="password" className="input" minLength={8} placeholder="Minimum 8 characters"
+                        value={resetForm.password} onChange={e => setResetForm(f => ({ ...f, password: e.target.value }))} required />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Confirm Password</label>
+                      <input type="password" className="input"
+                        value={resetForm.confirm} onChange={e => setResetForm(f => ({ ...f, confirm: e.target.value }))} required />
+                    </div>
+                  </>
+                )}
+                <div className="flex gap-3 pt-2">
+                  <button type="button" onClick={() => setResetUser(null)} className="btn-secondary flex-1">Cancel</button>
+                  <button type="submit" disabled={saving} className="btn-primary flex-1">
+                    {saving ? 'Resetting...' : 'Reset Password'}
+                  </button>
+                </div>
+              </form>
+            </>
+          )}
         </Modal>
       )}
 

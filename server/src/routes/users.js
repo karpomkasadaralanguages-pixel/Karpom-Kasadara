@@ -1,5 +1,6 @@
 const router = require('express').Router();
 const bcrypt = require('bcryptjs');
+const crypto = require('crypto');
 const { z } = require('zod');
 const prisma = require('../config/prisma');
 const { requireAuth, requireRole } = require('../middleware/auth');
@@ -8,6 +9,19 @@ const CLASS_LEVEL_ENUM = z.enum(['kg', 'class_1', 'class_2', 'class_3', 'class_4
 
 function canManageAccount(req, accountId) {
   return req.user.role === 'admin' || req.user.id === accountId;
+}
+
+// Passwords are only ever stored as a one-way bcrypt hash — nobody, including
+// an admin with full database access, can "look up" an existing password.
+// What an admin CAN do is set a new one. This generates a secure, easy-to-read
+// one (no visually ambiguous characters like 0/O or 1/l/I, since these often
+// go to kids) when the admin doesn't want to type one themselves.
+function generateReadablePassword(length = 10) {
+  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789';
+  const bytes = crypto.randomBytes(length);
+  let pw = '';
+  for (let i = 0; i < length; i++) pw += chars[bytes[i] % chars.length];
+  return pw;
 }
 
 // ── GET /users — admin only ───────────────────────────────────────────────────
@@ -331,12 +345,23 @@ module.exports = router;
 // ── POST /users/:id/reset-password — admin resets any user's password ─────────
 router.post('/:id/reset-password', requireAuth, requireRole('admin'), async (req, res, next) => {
   try {
-    const { newPassword } = z.object({ newPassword: z.string().min(8) }).parse(req.body);
-    const passwordHash = await bcrypt.hash(newPassword, 12);
+    const { newPassword } = z.object({ newPassword: z.string().min(8).optional() }).parse(req.body);
+
+    // Admin can either type a specific password, or leave it blank to have
+    // one generated. Either way the plaintext is hashed immediately and only
+    // ever returned once, right here — it is never stored or logged anywhere.
+    const plainPassword = newPassword || generateReadablePassword();
+    const passwordHash = await bcrypt.hash(plainPassword, 12);
     await prisma.user.update({ where: { id: req.params.id }, data: { passwordHash } });
     // Invalidate all sessions for this user
     await prisma.refreshToken.deleteMany({ where: { userId: req.params.id } });
-    res.json({ message: 'Password reset successfully.' });
+
+    res.json({
+      message: 'Password reset successfully.',
+      // Only echoed back when the server generated it — a password the admin
+      // typed themselves is already known to them.
+      ...(!newPassword && { generatedPassword: plainPassword }),
+    });
   } catch (err) {
     if (err.name === 'ZodError') return res.status(400).json({ error: { code: 'VALIDATION', message: err.errors[0].message } });
     next(err);

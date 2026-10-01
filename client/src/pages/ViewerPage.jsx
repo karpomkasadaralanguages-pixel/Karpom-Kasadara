@@ -386,7 +386,17 @@ export default function ViewerPage() {
               className="absolute inset-0 z-20"
               onMouseDown={startDraw} onMouseMove={draw} onMouseUp={endDraw} onMouseLeave={endDraw}
               onTouchStart={startDraw} onTouchMove={draw} onTouchEnd={endDraw}
-              style={{ cursor: cursor[tool] }}
+              style={{
+                cursor: cursor[tool],
+                // Tell the browser not to pan/scroll/zoom from touches on this
+                // element at all while a drawing tool is active — React's touch
+                // handlers are passive by default, so calling preventDefault()
+                // inside startDraw/draw has no effect on mobile; touch-action is
+                // the only reliable way to stop the page from moving under a
+                // finger while writing. Back to normal (scrollable/pinchable)
+                // once the pen/highlighter/eraser is switched off.
+                touchAction: tool === TOOLS.NONE ? 'auto' : 'none',
+              }}
             />
           </div>
         )}
