@@ -74,6 +74,34 @@ export default function ViewerPage() {
     return { meta: metaRes.data, buffer };
   }, [id]);
 
+  // ── ANNOTATION PERSISTENCE ─────────────────────────────────────────────────
+  // Marks (pen/highlighter strokes) are saved per page in sessionStorage so
+  // they're retained when flipping between pages and even after a reload —
+  // only the "Clear Page" button erases them.
+  const annotationKey = num => `annotations-${id}-${num}`;
+
+  const saveAnnotation = useCallback((num) => {
+    const canvas = annotationCanvasRef.current;
+    if (!canvas) return;
+    try {
+      const dataUrl = canvas.toDataURL('image/png');
+      sessionStorage.setItem(annotationKey(num), dataUrl);
+    } catch {}
+  }, [id]);
+
+  const loadAnnotation = useCallback((num, canvas) => {
+    try {
+      const saved = sessionStorage.getItem(annotationKey(num));
+      if (!saved) return;
+      const img = new Image();
+      img.onload = () => {
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+      };
+      img.src = saved;
+    } catch {}
+  }, [id]);
+
   const renderPage = useCallback(async (num) => {
     if (!pdfDocRef.current) return;
     const page = await pdfDocRef.current.getPage(num);
@@ -87,13 +115,15 @@ export default function ViewerPage() {
     const ctx = canvas.getContext('2d');
     await page.render({ canvasContext: ctx, viewport }).promise;
 
-    // Clear annotation canvas on page change
+    // Reset the annotation canvas for the new page, then restore any marks
+    // saved earlier for this page (if the student already wrote on it).
     const aCanvas = annotationCanvasRef.current;
     if (aCanvas) {
       aCanvas.width = viewport.width;
       aCanvas.height = viewport.height;
       const aCtx = aCanvas.getContext('2d');
       aCtx.clearRect(0, 0, aCanvas.width, aCanvas.height);
+      loadAnnotation(num, aCanvas);
     }
 
     // Update progress
@@ -107,7 +137,7 @@ export default function ViewerPage() {
         pageCount: pdfDocRef.current.numPages,
       });
     } catch {}
-  }, [zoom, id]);
+  }, [zoom, id, loadAnnotation]);
 
   useEffect(() => {
     let cancelled = false;
@@ -138,6 +168,19 @@ export default function ViewerPage() {
     setPageNum(clamped);
     setPageInputVal(String(clamped));
   };
+
+  // Arrow-key page turning — ignored while typing in the page-number box (or
+  // any other input) so the arrow keys still work for cursor movement there.
+  useEffect(() => {
+    const handleKeyDown = e => {
+      const tag = document.activeElement?.tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA') return;
+      if (e.key === 'ArrowRight') { e.preventDefault(); goTo(pageNum + 1); }
+      else if (e.key === 'ArrowLeft') { e.preventDefault(); goTo(pageNum - 1); }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [pageNum, pageCount]);
 
   // ── ANNOTATION ─────────────────────────────────────────────────────────────
   const getPos = (e, canvas) => {
@@ -194,11 +237,15 @@ export default function ViewerPage() {
     lastPointRef.current = pos;
   };
 
-  const endDraw = () => { isDrawingRef.current = false; };
+  const endDraw = () => {
+    if (isDrawingRef.current) saveAnnotation(pageNum);
+    isDrawingRef.current = false;
+  };
 
   const clearAnnotations = () => {
     const canvas = annotationCanvasRef.current;
     if (canvas) canvas.getContext('2d').clearRect(0, 0, canvas.width, canvas.height);
+    try { sessionStorage.removeItem(annotationKey(pageNum)); } catch {}
   };
 
   // A small pen-shaped SVG cursor so kids see a pen nib (not a "+") while drawing.
@@ -313,7 +360,7 @@ export default function ViewerPage() {
         </button>
 
         <div className="ml-auto text-xs text-gray-500">
-          Annotations are not saved
+          Marks are saved per page — use "Clear Page" to erase
         </div>
       </div>
 
