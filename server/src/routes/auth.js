@@ -22,7 +22,7 @@ function generateAccessToken(user, profileId = null) {
   return jwt.sign(
     { sub: user.id, role: user.role, profileId },
     process.env.JWT_SECRET,
-    { expiresIn: '15m' }
+    { expiresIn: '45m' }
   );
 }
 
@@ -110,12 +110,22 @@ router.post('/refresh', async (req, res, next) => {
       return res.status(401).json({ error: { code: 'INVALID_REFRESH_TOKEN', message: 'Invalid or expired refresh token.' } });
     }
 
-    // Rotate token, carrying the active profile forward unchanged.
-    await prisma.refreshToken.delete({ where: { id: stored.id } });
-    const newRefreshToken = await generateRefreshToken(stored.userId, stored.activeProfileId);
+    // Slide the expiry forward instead of deleting + reissuing a new token.
+    // Rotating on every call used to race: if two API calls expired and
+    // silently refreshed within the same instant (easy to hit — e.g. the
+    // viewer autosaving progress while another request is in flight), both
+    // tried to redeem the same single-use refresh token. Whichever lost the
+    // race found it already deleted and got logged out — mid-session, while
+    // the person was actively using the site. Updating the same row in place
+    // is idempotent, so concurrent refreshes can never invalidate each other.
+    const newExpiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000); // 7 days
+    await prisma.refreshToken.update({
+      where: { id: stored.id },
+      data: { expiresAt: newExpiresAt },
+    });
     const accessToken = generateAccessToken(stored.user, stored.activeProfileId);
 
-    res.cookie('refreshToken', newRefreshToken, {
+    res.cookie('refreshToken', token, {
       httpOnly: true, secure: process.env.NODE_ENV === 'production',
       sameSite: 'strict', maxAge: 7 * 24 * 60 * 60 * 1000,
     });
