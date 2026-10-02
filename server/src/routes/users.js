@@ -57,7 +57,7 @@ router.post('/', requireAuth, requireRole('admin'), async (req, res, next) => {
       email: z.string().email(),
       password: z.string().min(8),
       age: z.number().int().optional(),
-      parentPhone: z.string().optional(),
+      parentPhone: z.string().regex(/^\d{10}$/, 'Parent phone number must be exactly 10 digits.').optional(),
       classLevel: CLASS_LEVEL_ENUM.optional(),
     }).parse(req.body);
 
@@ -127,7 +127,7 @@ router.patch('/:id', requireAuth, async (req, res, next) => {
 
     const data = z.object({
       fullName: z.string().min(2).max(255).optional(),
-      parentPhone: z.union([z.string(), z.null()]).optional()
+      parentPhone: z.union([z.string().regex(/^\d{10}$/, 'Parent phone number must be exactly 10 digits.'), z.null()]).optional()
         .transform(v => (v === null ? undefined : v)),
       status: z.enum(['active', 'suspended']).optional(),
     }).parse(req.body);

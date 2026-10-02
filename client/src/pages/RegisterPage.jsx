@@ -70,7 +70,7 @@ export function RegisterPage() {
             </div>
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Parent Phone Number / <span className="font-tamil">பெற்றோர் தொலைபேசி</span></label>
-              <input type="tel" className="input" placeholder="+1 234 567 8900" value={form.parentPhone} onChange={e => setForm(f => ({ ...f, parentPhone: e.target.value }))} required />
+              <input type="tel" inputMode="numeric" pattern="[0-9]{10}" maxLength={10} className="input" placeholder="10-digit phone number" value={form.parentPhone} onChange={e => setForm(f => ({ ...f, parentPhone: e.target.value.replace(/\D/g, '').slice(0, 10) }))} required />
             </div>
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Class / <span className="font-tamil">வகுப்பு</span></label>

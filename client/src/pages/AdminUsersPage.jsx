@@ -408,7 +408,7 @@ export function AdminUsersPage() {
               </div>
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Parent Phone Number</label>
-                <input type="tel" className="input" value={createForm.parentPhone} onChange={e => setCreateForm(f => ({ ...f, parentPhone: e.target.value }))} />
+                <input type="tel" inputMode="numeric" pattern="[0-9]{10}" maxLength={10} className="input" placeholder="10-digit phone number" value={createForm.parentPhone} onChange={e => setCreateForm(f => ({ ...f, parentPhone: e.target.value.replace(/\D/g, '').slice(0, 10) }))} />
               </div>
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Class</label>
@@ -447,8 +447,8 @@ export function AdminUsersPage() {
             {editUser.role === 'student' && (
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Parent Phone Number</label>
-                <input type="tel" className="input" value={editForm.parentPhone}
-                  onChange={e => setEditForm(f => ({ ...f, parentPhone: e.target.value }))} />
+                <input type="tel" inputMode="numeric" pattern="[0-9]{10}" maxLength={10} className="input" placeholder="10-digit phone number" value={editForm.parentPhone}
+                  onChange={e => setEditForm(f => ({ ...f, parentPhone: e.target.value.replace(/\D/g, '').slice(0, 10) }))} />
               </div>
             )}
             <div className="flex gap-3 pt-2">
@@ -1101,8 +1101,8 @@ export function ProfilePage() {
             {user?.role === 'student' && (
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Parent Phone Number</label>
-                <input type="tel" className="input" value={form.parentPhone}
-                  onChange={e => setForm(f => ({ ...f, parentPhone: e.target.value }))} />
+                <input type="tel" inputMode="numeric" pattern="[0-9]{10}" maxLength={10} className="input" placeholder="10-digit phone number" value={form.parentPhone}
+                  onChange={e => setForm(f => ({ ...f, parentPhone: e.target.value.replace(/\D/g, '').slice(0, 10) }))} />
               </div>
             )}
             {msg && <div className="p-3 bg-green-50 border border-green-200 rounded-lg text-sm text-green-700">{msg}</div>}
