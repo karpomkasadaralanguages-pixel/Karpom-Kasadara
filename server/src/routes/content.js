@@ -510,4 +510,35 @@ router.patch('/submission/:submissionId', requireAuth, requireRole('admin', 'tea
   }
 });
 
+// DELETE /content/submission/:submissionId — remove a reviewed submission.
+// The student who submitted it, the teacher/admin who reviewed it, or any
+// admin can delete it once review is complete. Admins may also delete a
+// not-yet-reviewed submission (e.g. to clear a bad/duplicate upload).
+router.delete('/submission/:submissionId', requireAuth, async (req, res, next) => {
+  try {
+    const submission = await prisma.submission.findUnique({ where: { id: req.params.submissionId } });
+    if (!submission) return res.status(404).json({ error: { code: 'NOT_FOUND', message: 'Submission not found.' } });
+
+    const isOwner = req.user.role === 'student' && req.user.profileId === submission.studentId;
+    const isTeacherOrAdmin = req.user.role === 'teacher' || req.user.role === 'admin';
+
+    if (req.user.role !== 'admin') {
+      if (!isOwner && !isTeacherOrAdmin) {
+        return res.status(403).json({ error: { code: 'FORBIDDEN', message: 'You cannot delete this submission.' } });
+      }
+      if (submission.status !== 'reviewed') {
+        return res.status(400).json({ error: { code: 'NOT_REVIEWED', message: 'This submission can only be deleted after it has been reviewed.' } });
+      }
+    }
+
+    // Best-effort file cleanup — don't fail the delete if storage removal errors.
+    deleteFile(submission.fileStoragePath).catch(() => {});
+    await prisma.submission.delete({ where: { id: submission.id } });
+
+    res.json({ message: 'Submission deleted.' });
+  } catch (err) {
+    next(err);
+  }
+});
+
 module.exports = router;

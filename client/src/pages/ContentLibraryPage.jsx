@@ -269,6 +269,7 @@ function SubmitWorkModal({ item, onClose }) {
   const [submission, setSubmission] = useState(null);
   const [file, setFile] = useState(null);
   const [uploading, setUploading] = useState(false);
+  const [deleting, setDeleting] = useState(false);
   const [error, setError] = useState('');
 
   useEffect(() => {
@@ -291,6 +292,17 @@ function SubmitWorkModal({ item, onClose }) {
     } catch (err) {
       setError(err.response?.data?.error?.message || 'Submission failed.');
     } finally { setUploading(false); }
+  };
+
+  const handleDelete = async () => {
+    if (!window.confirm('Delete this submission? This cannot be undone.')) return;
+    setDeleting(true); setError('');
+    try {
+      await api.delete(`/content/submission/${submission.id}`);
+      setSubmission(null);
+    } catch (err) {
+      setError(err.response?.data?.error?.message || 'Could not delete submission.');
+    } finally { setDeleting(false); }
   };
 
   return (
@@ -319,6 +331,15 @@ function SubmitWorkModal({ item, onClose }) {
                     <div className="text-xs mt-2 pt-2 border-t border-current border-opacity-20">
                       <span className="font-medium">Teacher's note:</span> {submission.teacherComment}
                     </div>
+                  )}
+                  {submission.status === 'reviewed' && (
+                    <button
+                      onClick={handleDelete}
+                      disabled={deleting}
+                      className="text-xs mt-2 pt-2 border-t border-current border-opacity-20 w-full text-left text-red-700 hover:text-red-900"
+                    >
+                      {deleting ? 'Deleting...' : '🗑️ Delete this submission'}
+                    </button>
                   )}
                 </div>
               )}
@@ -379,6 +400,15 @@ function SubmissionsModal({ item, onClose }) {
     } catch {} finally { setBusyId(null); }
   };
 
+  const handleDelete = async submissionId => {
+    if (!window.confirm('Delete this student\'s submission? This cannot be undone.')) return;
+    setBusyId(submissionId);
+    try {
+      await api.delete(`/content/submission/${submissionId}`);
+      load();
+    } catch {} finally { setBusyId(null); }
+  };
+
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 px-4">
       <div className="bg-white rounded-xl shadow-xl w-full max-w-lg max-h-[80vh] flex flex-col">
@@ -414,7 +444,7 @@ function SubmissionsModal({ item, onClose }) {
                         <button onClick={() => handleDownload(r.submission.id)} className="btn-secondary text-xs py-1 px-2">
                           📄 View / Download
                         </button>
-                        {r.submission.status !== 'reviewed' && (
+                        {r.submission.status !== 'reviewed' ? (
                           <>
                             <input
                               type="text" placeholder="Optional note to student..."
@@ -430,6 +460,14 @@ function SubmissionsModal({ item, onClose }) {
                               {busyId === r.submission.id ? 'Saving...' : '✅ Mark Reviewed'}
                             </button>
                           </>
+                        ) : (
+                          <button
+                            onClick={() => handleDelete(r.submission.id)}
+                            disabled={busyId === r.submission.id}
+                            className="text-xs py-1 px-2 text-red-700 hover:text-red-900"
+                          >
+                            {busyId === r.submission.id ? 'Deleting...' : '🗑️ Delete'}
+                          </button>
                         )}
                       </div>
                       {r.submission.teacherComment && (
