@@ -184,7 +184,7 @@ router.post('/register', async (req, res, next) => {
       email: z.string().email(),
       password: z.string().min(8),
       age: z.number().int().min(1).max(120),
-      parentPhone: z.string().regex(/^\d{10}$/, 'Parent phone number must be exactly 10 digits.'),
+      parentPhone: z.string().regex(/^\d{1,18}$/, 'Parent phone number must be numeric, up to 18 digits.'),
       classLevel: z.enum(['kg', 'class_1', 'class_2', 'class_3', 'class_4', 'class_5', 'class_6', 'class_7', 'class_8']).optional(),
     }).parse(req.body);
 

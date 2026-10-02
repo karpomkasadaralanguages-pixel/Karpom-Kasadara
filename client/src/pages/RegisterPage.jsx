@@ -13,6 +13,7 @@ export function RegisterPage() {
     fullName: params.get('name') || '',
     email: params.get('email') || '',
     password: '',
+    confirmPassword: '',
     age: '',
     parentPhone: '',
     classLevel: '',
@@ -23,9 +24,14 @@ export function RegisterPage() {
   const handleSubmit = async e => {
     e.preventDefault();
     setError('');
+    if (form.password !== form.confirmPassword) {
+      setError('Passwords do not match.');
+      return;
+    }
     setLoading(true);
     try {
-      await api.post('/auth/register', { ...form, age: parseInt(form.age), classLevel: form.classLevel || undefined });
+      const { confirmPassword, ...payload } = form;
+      await api.post('/auth/register', { ...payload, age: parseInt(form.age), classLevel: form.classLevel || undefined });
       await login(form.email, form.password);
       navigate('/dashboard');
     } catch (err) {
@@ -65,12 +71,22 @@ export function RegisterPage() {
               <input type="password" className="input" placeholder="Minimum 8 characters" value={form.password} onChange={e => setForm(f => ({ ...f, password: e.target.value }))} required minLength={8} />
             </div>
             <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Confirm Password / <span className="font-tamil">கடவுச்சொல்லை உறுதிப்படுத்தவும்</span></label>
+              <input type="password" className="input" placeholder="Re-enter your password"
+                value={form.confirmPassword}
+                onChange={e => setForm(f => ({ ...f, confirmPassword: e.target.value }))}
+                required minLength={8} />
+              {form.confirmPassword && form.password !== form.confirmPassword && (
+                <p className="text-xs text-red-600 mt-1">Passwords do not match.</p>
+              )}
+            </div>
+            <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Age / <span className="font-tamil">வயது</span></label>
               <input type="number" className="input" value={form.age} onChange={e => setForm(f => ({ ...f, age: e.target.value }))} required min={1} max={120} />
             </div>
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Parent Phone Number / <span className="font-tamil">பெற்றோர் தொலைபேசி</span></label>
-              <input type="tel" inputMode="numeric" pattern="[0-9]{10}" maxLength={10} className="input" placeholder="10-digit phone number" value={form.parentPhone} onChange={e => setForm(f => ({ ...f, parentPhone: e.target.value.replace(/\D/g, '').slice(0, 10) }))} required />
+              <input type="tel" inputMode="numeric" pattern="[0-9]{1,18}" maxLength={18} className="input" placeholder="Phone number" value={form.parentPhone} onChange={e => setForm(f => ({ ...f, parentPhone: e.target.value.replace(/\D/g, '').slice(0, 18) }))} required />
             </div>
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Class / <span className="font-tamil">வகுப்பு</span></label>
@@ -79,7 +95,7 @@ export function RegisterPage() {
                 {CLASS_LEVELS.map(c => <option key={c.value} value={c.value}>{c.label}</option>)}
               </select>
             </div>
-            <button type="submit" disabled={loading} className="btn-primary w-full mt-2">
+            <button type="submit" disabled={loading || (form.confirmPassword && form.password !== form.confirmPassword)} className="btn-primary w-full mt-2">
               {loading ? 'Creating account...' : <><span className="font-tamil">பதிவு செய்</span> / Register</>}
             </button>
           </form>
