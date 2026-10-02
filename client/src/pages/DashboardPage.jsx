@@ -40,12 +40,17 @@ export default function DashboardPage() {
   const [stats, setStats] = useState({});
   const [progress, setProgress] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [unreadInquiries, setUnreadInquiries] = useState(0);
 
   useEffect(() => {
     Promise.all([
       api.get('/announcements').then(r => setAnnouncements(r.data.announcements)),
       loadStats(),
     ]).finally(() => setLoading(false));
+
+    if (user?.role === 'admin') {
+      api.get('/inquiries/unread-count').then(({ data }) => setUnreadInquiries(data.count)).catch(() => {});
+    }
   }, []);
 
   async function loadStats() {
@@ -96,6 +101,25 @@ export default function DashboardPage() {
           Welcome back — <span className="font-tamil">{greeting[user?.role]}</span> / {user?.role}
         </p>
       </div>
+
+      {/* Unread inquiries alert (admin only) */}
+      {user?.role === 'admin' && unreadInquiries > 0 && (
+        <Link
+          to="/admin/inquiries"
+          className="flex items-center justify-between gap-3 mb-6 p-4 bg-amber-50 border border-amber-200 rounded-xl hover:bg-amber-100 transition-colors"
+        >
+          <div className="flex items-center gap-3">
+            <span className="text-2xl">📬</span>
+            <div>
+              <div className="font-semibold text-amber-900 text-sm">
+                {unreadInquiries} unread {unreadInquiries === 1 ? 'inquiry' : 'inquiries'}
+              </div>
+              <div className="text-xs text-amber-700">New messages from the website's contact form</div>
+            </div>
+          </div>
+          <span className="text-amber-700 text-sm font-medium">View →</span>
+        </Link>
+      )}
 
       {/* Stats */}
       {!loading && (

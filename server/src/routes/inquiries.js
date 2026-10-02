@@ -47,6 +47,14 @@ router.get('/', requireAuth, requireRole('admin'), async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
+// ── GET /inquiries/unread-count — admin only, for the sidebar/dashboard badge ──
+router.get('/unread-count', requireAuth, requireRole('admin'), async (req, res, next) => {
+  try {
+    const count = await prisma.inquiry.count({ where: { isRead: false } });
+    res.json({ count });
+  } catch (err) { next(err); }
+});
+
 // ── PATCH /inquiries/:id — mark read/unread (admin only) ──────────────────────
 router.patch('/:id', requireAuth, requireRole('admin'), async (req, res, next) => {
   try {

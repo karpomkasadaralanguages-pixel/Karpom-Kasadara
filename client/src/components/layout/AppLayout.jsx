@@ -1,6 +1,7 @@
-import React, { useState } from 'react';
-import { Outlet, NavLink, useNavigate } from 'react-router-dom';
+import React, { useState, useEffect } from 'react';
+import { Outlet, NavLink, useNavigate, useLocation } from 'react-router-dom';
 import useAuthStore from '../../store/authStore';
+import api from '../../api/axios';
 
 const NAV = {
   admin: [
@@ -27,8 +28,20 @@ const NAV = {
 export default function AppLayout() {
   const { user, logout, profiles, activeProfileId, switchProfile } = useAuthStore();
   const navigate = useNavigate();
+  const location = useLocation();
   const [mobileOpen, setMobileOpen] = useState(false);
   const [switching, setSwitching] = useState(false);
+  const [unreadInquiries, setUnreadInquiries] = useState(0);
+
+  // Admin-only: how many inquiries haven't been marked read yet, shown as a
+  // badge on the sidebar link. Re-checked on every navigation so the badge
+  // clears shortly after visiting the Inquiries page and marking things read.
+  useEffect(() => {
+    if (user?.role !== 'admin') return;
+    api.get('/inquiries/unread-count')
+      .then(({ data }) => setUnreadInquiries(data.count))
+      .catch(() => {});
+  }, [user?.role, location.pathname]);
 
   const navItems = NAV[user?.role] || NAV.student;
   const activeProfile = profiles.find(p => p.id === activeProfileId);
@@ -110,10 +123,15 @@ export default function AppLayout() {
             }
           >
             <span className="text-base w-5 text-center">{item.icon}</span>
-            <span className="flex flex-col leading-tight">
+            <span className="flex flex-col leading-tight flex-1">
               <span className="font-tamil text-xs">{item.tamil}</span>
               <span className="text-xs opacity-75">{item.label}</span>
             </span>
+            {item.to === '/admin/inquiries' && unreadInquiries > 0 && (
+              <span className="ml-auto bg-red-500 text-white text-xs font-semibold rounded-full min-w-[1.25rem] h-5 px-1.5 flex items-center justify-center">
+                {unreadInquiries}
+              </span>
+            )}
           </NavLink>
         ))}
       </nav>
