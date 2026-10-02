@@ -460,9 +460,9 @@ export function AdminUsersPage() {
           {/* ── STUDENT PROFILES ──────────────────────────────────────────────── */}
           {editUser.role === 'student' && (
             <div className="mt-6 pt-5 border-t border-gray-100">
-              <h3 className="text-sm font-semibold text-gray-800 mb-1">Students on this Login</h3>
+              <h3 className="text-sm font-semibold text-gray-800 mb-1">Student on this Login</h3>
               <p className="text-xs text-gray-500 mb-3">
-                One email can have several children under it. Each student here has fully separate progress, quizzes, and assignments.
+                Each login is for one child. To add another child, create a separate account for them.
               </p>
               {profileError && <div className="p-3 mb-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700">{profileError}</div>}
 
@@ -508,23 +508,29 @@ export function AdminUsersPage() {
                 ))}
               </div>
 
-              <form onSubmit={handleAddProfile} className="space-y-2 bg-gray-50 rounded-lg p-3">
-                <label className="block text-xs font-medium text-gray-600">+ Add Another Student</label>
-                <input type="text" className="input text-sm" placeholder="Student's name" value={newProfile.fullName}
-                  onChange={e => setNewProfile(f => ({ ...f, fullName: e.target.value }))} />
-                <div className="flex gap-2">
-                  <input type="number" className="input text-sm" placeholder="Age" value={newProfile.age}
-                    onChange={e => setNewProfile(f => ({ ...f, age: e.target.value }))} />
-                  <select className="input text-sm" value={newProfile.classLevel}
-                    onChange={e => setNewProfile(f => ({ ...f, classLevel: e.target.value }))}>
-                    <option value="">Class: Not set</option>
-                    {CLASS_LEVELS.map(c => <option key={c.value} value={c.value}>{c.label}</option>)}
-                  </select>
-                </div>
-                <button type="submit" disabled={profileBusy} className="btn-primary text-xs w-full py-1.5">
-                  {profileBusy ? 'Adding...' : '+ Add Student'}
-                </button>
-              </form>
+              {editProfiles.length < 1 ? (
+                <form onSubmit={handleAddProfile} className="space-y-2 bg-gray-50 rounded-lg p-3">
+                  <label className="block text-xs font-medium text-gray-600">+ Add Student</label>
+                  <input type="text" className="input text-sm" placeholder="Student's name" value={newProfile.fullName}
+                    onChange={e => setNewProfile(f => ({ ...f, fullName: e.target.value }))} />
+                  <div className="flex gap-2">
+                    <input type="number" className="input text-sm" placeholder="Age" value={newProfile.age}
+                      onChange={e => setNewProfile(f => ({ ...f, age: e.target.value }))} />
+                    <select className="input text-sm" value={newProfile.classLevel}
+                      onChange={e => setNewProfile(f => ({ ...f, classLevel: e.target.value }))}>
+                      <option value="">Class: Not set</option>
+                      {CLASS_LEVELS.map(c => <option key={c.value} value={c.value}>{c.label}</option>)}
+                    </select>
+                  </div>
+                  <button type="submit" disabled={profileBusy} className="btn-primary text-xs w-full py-1.5">
+                    {profileBusy ? 'Adding...' : '+ Add Student'}
+                  </button>
+                </form>
+              ) : (
+                <p className="text-xs text-gray-400 bg-gray-50 rounded-lg p-3">
+                  This login already has a student. Create a new account for another child.
+                </p>
+              )}
             </div>
           )}
         </Modal>
@@ -1116,9 +1122,9 @@ export function ProfilePage() {
       {/* ── MY STUDENTS ──────────────────────────────────────────────────────── */}
       {user?.role === 'student' && (
         <div className="card">
-          <h2 className="font-semibold text-gray-800 mb-1 text-sm">My Students</h2>
+          <h2 className="font-semibold text-gray-800 mb-1 text-sm">My Student</h2>
           <p className="text-xs text-gray-500 mb-3">
-            Everyone listed here can log in with this same email. Each student keeps their own separate progress and quiz results.
+            Each login is for one child. If you have another child, ask an admin to set up a separate account for them.
           </p>
           {profileError && <div className="p-3 mb-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700">{profileError}</div>}
 
@@ -1169,23 +1175,25 @@ export function ProfilePage() {
             ))}
           </div>
 
-          <form onSubmit={handleAddProfile} className="space-y-2 bg-gray-50 rounded-lg p-3">
-            <label className="block text-xs font-medium text-gray-600">+ Add Another Student</label>
-            <input type="text" className="input text-sm" placeholder="Student's name" value={newProfile.fullName}
-              onChange={e => setNewProfile(f => ({ ...f, fullName: e.target.value }))} />
-            <div className="flex gap-2">
-              <input type="number" className="input text-sm" placeholder="Age" value={newProfile.age}
-                onChange={e => setNewProfile(f => ({ ...f, age: e.target.value }))} />
-              <select className="input text-sm" value={newProfile.classLevel}
-                onChange={e => setNewProfile(f => ({ ...f, classLevel: e.target.value }))}>
-                <option value="">Class: Not set</option>
-                {CLASS_LEVELS.map(c => <option key={c.value} value={c.value}>{c.label}</option>)}
-              </select>
-            </div>
-            <button type="submit" disabled={profileBusy} className="btn-primary text-xs w-full py-1.5">
-              {profileBusy ? 'Adding...' : '+ Add Student'}
-            </button>
-          </form>
+          {profiles.length < 1 && (
+            <form onSubmit={handleAddProfile} className="space-y-2 bg-gray-50 rounded-lg p-3">
+              <label className="block text-xs font-medium text-gray-600">+ Add Student</label>
+              <input type="text" className="input text-sm" placeholder="Student's name" value={newProfile.fullName}
+                onChange={e => setNewProfile(f => ({ ...f, fullName: e.target.value }))} />
+              <div className="flex gap-2">
+                <input type="number" className="input text-sm" placeholder="Age" value={newProfile.age}
+                  onChange={e => setNewProfile(f => ({ ...f, age: e.target.value }))} />
+                <select className="input text-sm" value={newProfile.classLevel}
+                  onChange={e => setNewProfile(f => ({ ...f, classLevel: e.target.value }))}>
+                  <option value="">Class: Not set</option>
+                  {CLASS_LEVELS.map(c => <option key={c.value} value={c.value}>{c.label}</option>)}
+                </select>
+              </div>
+              <button type="submit" disabled={profileBusy} className="btn-primary text-xs w-full py-1.5">
+                {profileBusy ? 'Adding...' : '+ Add Student'}
+              </button>
+            </form>
+          )}
         </div>
       )}
     </div>

@@ -175,6 +175,13 @@ router.post('/:id/profiles', requireAuth, async (req, res, next) => {
       return res.status(400).json({ error: { code: 'INVALID', message: 'Profiles can only be added to a student account.' } });
     }
 
+    // Each login is limited to one child — give every additional child their
+    // own account/email instead of adding a sibling profile here.
+    const existingCount = await prisma.studentProfile.count({ where: { accountId: req.params.id, deletedAt: null } });
+    if (existingCount >= 1) {
+      return res.status(400).json({ error: { code: 'PROFILE_LIMIT', message: 'This account already has a student. Create a separate login for another child.' } });
+    }
+
     const data = z.object({
       fullName: z.string().min(2).max(255),
       age: z.number().int().min(1).max(120).optional(),
