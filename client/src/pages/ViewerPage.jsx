@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import * as pdfjsLib from 'pdfjs-dist';
+import { jsPDF } from 'jspdf';
 import api from '../api/axios';
 import useAuthStore from '../store/authStore';
 
@@ -12,6 +13,9 @@ pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
 
 const TOOLS = { NONE: 'none', PEN: 'pen', HIGHLIGHTER: 'highlighter', ERASER: 'eraser' };
 const COLORS = ['#FFD700', '#FF6B6B', '#4ECDC4', '#45B7D1', '#96CEB4', '#FFEAA7'];
+// Only these content types can be submitted back to a teacher — keep in
+// sync with SUBMITTABLE_TYPES in ContentLibraryPage.jsx.
+const SUBMITTABLE_TYPES = ['workbook', 'worksheet', 'question_paper'];
 
 export default function ViewerPage() {
   const { id } = useParams();
@@ -30,6 +34,8 @@ export default function ViewerPage() {
   const [pageNum, setPageNum] = useState(1);
   const [pageCount, setPageCount] = useState(0);
   const [title, setTitle] = useState('');
+  const [contentType, setContentType] = useState('');
+  const [submitOpen, setSubmitOpen] = useState(false);
   const [zoom, setZoom] = useState(1.0);
   const [tool, setTool] = useState(TOOLS.NONE);
   const [penColor, setPenColor] = useState('#1B5E20');
@@ -146,6 +152,7 @@ export default function ViewerPage() {
         setLoading(true);
         const { meta, buffer } = await fetchPdf();
         setTitle(meta.title);
+        setContentType(meta.contentType || '');
         const pdf = await loadPdf(buffer);
         // Use PDF.js page count as source of truth
         const pc = pdf.numPages || meta.pageCount || 0;
@@ -287,6 +294,15 @@ export default function ViewerPage() {
           <span className="font-semibold text-sm truncate max-w-xs">{title}</span>
         </div>
 
+        {user?.role === 'student' && SUBMITTABLE_TYPES.includes(contentType) && (
+          <button
+            onClick={() => setSubmitOpen(true)}
+            className="px-3 py-1.5 rounded bg-primary-600 hover:bg-primary-700 text-white text-sm font-medium"
+          >
+            📤 Submit My Work
+          </button>
+        )}
+
         {/* Page navigation */}
         <div className="flex items-center gap-2 text-sm">
           <button onClick={() => goTo(pageNum - 1)} disabled={pageNum <= 1} className="p-1.5 rounded hover:bg-gray-700 disabled:opacity-30">◀</button>
@@ -400,6 +416,176 @@ export default function ViewerPage() {
             />
           </div>
         )}
+      </div>
+
+      {submitOpen && (
+        <SubmitFromViewerModal
+          contentId={id}
+          title={title}
+          pageCount={pageCount}
+          pdfDocRef={pdfDocRef}
+          annotationKey={annotationKey}
+          onClose={() => setSubmitOpen(false)}
+        />
+      )}
+    </div>
+  );
+}
+
+// ── SUBMIT FROM VIEWER ──────────────────────────────────────────────────────
+// Lets a student submit their on-screen pen/highlighter marks directly,
+// instead of needing to print the page, fill it by hand, and photograph it.
+// Walks every page, redraws it (PDF content + any saved annotation overlay
+// for that page) onto an offscreen canvas, and stitches the results into a
+// single PDF with jsPDF, which is then uploaded through the same /submit
+// endpoint used for a plain photo/PDF upload.
+function SubmitFromViewerModal({ contentId, title, pageCount, pdfDocRef, annotationKey, onClose }) {
+  const [loading, setLoading] = useState(true);
+  const [submission, setSubmission] = useState(null);
+  const [status, setStatus] = useState(''); // progress text while generating
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const [fallbackFile, setFallbackFile] = useState(null);
+
+  useEffect(() => {
+    api.get(`/content/${contentId}/submission`)
+      .then(({ data }) => setSubmission(data.submission))
+      .catch(() => {})
+      .finally(() => setLoading(false));
+  }, [contentId]);
+
+  const loadAnnotationImage = (num) => new Promise(resolve => {
+    let saved;
+    try { saved = sessionStorage.getItem(annotationKey(num)); } catch { saved = null; }
+    if (!saved) { resolve(null); return; }
+    const img = new Image();
+    img.onload = () => resolve(img);
+    img.onerror = () => resolve(null);
+    img.src = saved;
+  });
+
+  const buildAnnotatedPdf = async () => {
+    const pdf = pdfDocRef.current;
+    if (!pdf) throw new Error('The document is still loading — please wait and try again.');
+
+    const EXPORT_SCALE = 2; // render at a fixed, decent-quality scale regardless of on-screen zoom
+    let doc = null;
+
+    for (let num = 1; num <= pageCount; num++) {
+      setStatus(`Preparing page ${num} of ${pageCount}...`);
+      const page = await pdf.getPage(num);
+      const viewport = page.getViewport({ scale: EXPORT_SCALE });
+
+      const canvas = document.createElement('canvas');
+      canvas.width = viewport.width;
+      canvas.height = viewport.height;
+      const ctx = canvas.getContext('2d');
+      await page.render({ canvasContext: ctx, viewport }).promise;
+
+      const annoImg = await loadAnnotationImage(num);
+      if (annoImg) ctx.drawImage(annoImg, 0, 0, canvas.width, canvas.height);
+
+      const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
+
+      if (!doc) {
+        doc = new jsPDF({ unit: 'px', format: [canvas.width, canvas.height], hotfixes: ['px_scaling'] });
+      } else {
+        doc.addPage([canvas.width, canvas.height]);
+      }
+      doc.addImage(dataUrl, 'JPEG', 0, 0, canvas.width, canvas.height);
+    }
+
+    return doc.output('blob');
+  };
+
+  const handleSubmitAnnotated = async () => {
+    setBusy(true); setError('');
+    try {
+      const blob = await buildAnnotatedPdf();
+      setStatus('Uploading...');
+      const file = new File([blob], `${title || 'submission'}.pdf`, { type: 'application/pdf' });
+      const fd = new FormData();
+      fd.append('file', file);
+      const { data } = await api.post(`/content/${contentId}/submit`, fd, { headers: { 'Content-Type': 'multipart/form-data' } });
+      setSubmission(data.submission);
+    } catch (err) {
+      setError(err.response?.data?.error?.message || 'Could not submit your marked-up pages. Please try again.');
+    } finally { setBusy(false); setStatus(''); }
+  };
+
+  const handleSubmitFile = async () => {
+    if (!fallbackFile) return;
+    setBusy(true); setError('');
+    try {
+      const fd = new FormData();
+      fd.append('file', fallbackFile);
+      const { data } = await api.post(`/content/${contentId}/submit`, fd, { headers: { 'Content-Type': 'multipart/form-data' } });
+      setSubmission(data.submission);
+      setFallbackFile(null);
+    } catch (err) {
+      setError(err.response?.data?.error?.message || 'Submission failed.');
+    } finally { setBusy(false); }
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 px-4">
+      <div className="bg-white rounded-xl shadow-xl w-full max-w-md">
+        <div className="flex items-center justify-between p-5 border-b border-gray-100">
+          <h2 className="font-semibold text-gray-800">Submit — {title}</h2>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-600 text-xl">×</button>
+        </div>
+        <div className="p-5 space-y-4">
+          {loading ? (
+            <div className="text-center py-6 text-gray-400">Loading...</div>
+          ) : (
+            <>
+              {submission && (
+                <div className={`p-3 rounded-lg text-sm border ${
+                  submission.status === 'reviewed' ? 'bg-green-50 border-green-200 text-green-800' : 'bg-blue-50 border-blue-200 text-blue-800'
+                }`}>
+                  <div className="font-medium">
+                    {submission.status === 'reviewed' ? '✅ Reviewed by your teacher' : '📤 Submitted — waiting for review'}
+                  </div>
+                  <div className="text-xs mt-1 opacity-80">
+                    {submission.fileName} · {new Date(submission.submittedAt).toLocaleString()}
+                  </div>
+                  {submission.teacherComment && (
+                    <div className="text-xs mt-2 pt-2 border-t border-current border-opacity-20">
+                      <span className="font-medium">Teacher's note:</span> {submission.teacherComment}
+                    </div>
+                  )}
+                  <div className="text-xs mt-2 pt-2 border-t border-current border-opacity-20 opacity-70">
+                    You can manage or delete this submission from the Content Library.
+                  </div>
+                </div>
+              )}
+              {error && <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700">{error}</div>}
+
+              <div>
+                <button onClick={handleSubmitAnnotated} disabled={busy} className="btn-primary w-full">
+                  {busy && status ? status : busy ? 'Submitting...' : submission ? '✏️ Submit My Marked-Up Pages Again' : '✏️ Submit My Marked-Up Pages'}
+                </button>
+                <p className="text-xs text-gray-400 mt-1">
+                  Uses whatever you've written with the pen/highlighter on every page. Blank pages are included as-is.
+                </p>
+              </div>
+
+              <div className="pt-3 border-t border-gray-100">
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Or upload a photo/PDF instead
+                </label>
+                <input
+                  type="file" accept=".pdf,image/*"
+                  onChange={e => setFallbackFile(e.target.files[0])}
+                  className="block w-full text-sm text-gray-600 file:mr-3 file:py-1.5 file:px-3 file:rounded-md file:border-0 file:text-sm file:bg-primary-50 file:text-primary-800 hover:file:bg-primary-100 cursor-pointer"
+                />
+                <button onClick={handleSubmitFile} disabled={busy || !fallbackFile} className="btn-secondary w-full mt-2">
+                  {busy ? 'Submitting...' : 'Submit This File Instead'}
+                </button>
+              </div>
+            </>
+          )}
+        </div>
       </div>
     </div>
   );

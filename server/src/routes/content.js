@@ -287,10 +287,10 @@ router.get('/:id/view/meta', requireAuth, requireAssignment, async (req, res, ne
   try {
     const content = await prisma.content.findUnique({
       where: { id: req.params.id, deletedAt: null, status: 'ready' },
-      select: { pageCount: true, title: true }
+      select: { pageCount: true, title: true, contentType: true }
     });
     if (!content) return res.status(404).json({ error: { code: 'NOT_FOUND', message: 'Content not found or not ready.' } });
-    res.json({ pageCount: content.pageCount, title: content.title });
+    res.json({ pageCount: content.pageCount, title: content.title, contentType: content.contentType });
   } catch (err) { next(err); }
 });
 
