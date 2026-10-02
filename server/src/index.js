@@ -2,6 +2,7 @@ require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
+const cookieParser = require('cookie-parser');
 const rateLimit = require('express-rate-limit');
 
 const authRoutes = require('./routes/auth');
@@ -44,6 +45,11 @@ app.use(cors({
 // ── BODY PARSING ──────────────────────────────────────────────────────────────
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true }));
+// Without this, req.cookies is always undefined — every refresh-token read
+// (POST /auth/refresh, /switch-profile, /logout) silently failed, which is
+// why a page reload (or the access token expiring mid-session) logged
+// people out instead of transparently refreshing.
+app.use(cookieParser());
 
 app.set('trust proxy', 1);
 
