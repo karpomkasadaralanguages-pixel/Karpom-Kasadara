@@ -54,7 +54,7 @@ export default function AdminLoginActivityPage() {
       <div className="flex items-start justify-between gap-3 mb-6 flex-wrap">
         <div>
           <h1 className="text-xl font-bold text-gray-900">Login Activity</h1>
-          <p className="text-sm text-gray-500">Who has signed in, and when. All times are India Standard Time (IST).</p>
+          <p className="text-sm text-gray-500">Who has signed in, and when. Students and teachers only; the last 3 months are kept. All times are India Standard Time (IST).</p>
         </div>
         <button onClick={load} disabled={loading} className="btn-secondary text-sm">
           {loading ? 'Refreshing...' : '↻ Refresh'}
@@ -91,7 +91,6 @@ export default function AdminLoginActivityPage() {
           <option value="">All roles</option>
           <option value="student">Students</option>
           <option value="teacher">Teachers</option>
-          <option value="admin">Admins</option>
         </select>
         <input
           type="text" className="input text-sm flex-1 min-w-[160px]" placeholder="Search name or email..."
@@ -152,7 +151,7 @@ export default function AdminLoginActivityPage() {
       )}
 
       <p className="text-xs text-gray-400 mt-4">
-        Sign-ins are recorded from the point this feature went live; earlier logins aren't available.
+        Student and teacher sign-ins only. History older than 3 months is removed automatically.
       </p>
     </div>
   );

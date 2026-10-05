@@ -68,9 +68,14 @@ router.post('/login', async (req, res, next) => {
     await prisma.user.update({ where: { id: user.id }, data: { lastLoginAt: now } });
     // Keep a history row for the admin "Login Activity" view. Best-effort: a
     // failure here must never stop someone from signing in.
-    prisma.loginEvent.create({ data: { userId: user.id, loggedInAt: now } }).catch(err => {
-      console.error('Failed to record login event:', err.message);
-    });
+    // Only students and teachers are tracked — admin sign-ins are not recorded.
+    if (user.role !== 'admin') {
+      prisma.loginEvent.create({ data: { userId: user.id, loggedInAt: now } })
+        .then(() => purgeOldLoginEvents())
+        .catch(err => {
+          console.error('Failed to record login event:', err.message);
+        });
+    }
 
     let profiles = [];
     let activeProfileId = null;
@@ -105,7 +110,20 @@ router.post('/login', async (req, res, next) => {
   }
 });
 
-// ── GET /login-history — admin only: who signed in, and when ──────────────────
+// Login history is kept for 3 months only. Anything older (and any admin rows
+// recorded before admins were excluded) is deleted. Throttled to once an hour.
+let lastLoginPurge = 0;
+async function purgeOldLoginEvents(force = false) {
+  if (!force && Date.now() - lastLoginPurge < 60 * 60 * 1000) return;
+  lastLoginPurge = Date.now();
+  const cutoff = new Date();
+  cutoff.setMonth(cutoff.getMonth() - 3);
+  await prisma.loginEvent.deleteMany({
+    where: { OR: [{ loggedInAt: { lt: cutoff } }, { user: { role: 'admin' } }] },
+  });
+}
+
+// ── GET /login-history — admin only: students and teachers only, last 3 months ──────────────────
 router.get('/login-history', requireAuth, requireRole('admin'), async (req, res, next) => {
   try {
     const { limit, userId } = z.object({
@@ -113,8 +131,10 @@ router.get('/login-history', requireAuth, requireRole('admin'), async (req, res,
       userId: z.string().uuid().optional(),
     }).parse(req.query);
 
+    await purgeOldLoginEvents(true).catch(err => console.error('Login history purge failed:', err.message));
+
     const events = await prisma.loginEvent.findMany({
-      where: userId ? { userId } : undefined,
+      where: { ...(userId ? { userId } : {}), user: { role: { not: 'admin' } } },
       orderBy: { loggedInAt: 'desc' },
       take: limit,
       select: {
