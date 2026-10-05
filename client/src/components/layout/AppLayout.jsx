@@ -10,6 +10,7 @@ const NAV = {
     { to: '/admin/users',         label: 'Users',           tamil: 'பயனர்கள்',      icon: '👥' },
     { to: '/admin/announcements', label: 'Announcements',   tamil: 'அறிவிப்புகள்',  icon: '📢' },
     { to: '/admin/inquiries',     label: 'Inquiries',       tamil: 'விசாரணைகள்',    icon: '✉️' },
+    { to: '/admin/login-activity', label: 'Login Activity', tamil: 'உள்நுழைவுகள்',  icon: '🕒' },
     { to: '/profile',             label: 'Profile',         tamil: 'சுயவிவரம்',     icon: '👤' },
   ],
   teacher: [

@@ -86,7 +86,7 @@ export function RegisterPage() {
             </div>
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Parent Phone Number / <span className="font-tamil">பெற்றோர் தொலைபேசி</span></label>
-              <input type="tel" inputMode="numeric" pattern="[0-9]{1,18}" maxLength={18} className="input" placeholder="Phone number" value={form.parentPhone} onChange={e => setForm(f => ({ ...f, parentPhone: e.target.value.replace(/\D/g, '').slice(0, 18) }))} required />
+              <input type="text" maxLength={50} className="input" placeholder="e.g. +91 98765 43210" value={form.parentPhone} onChange={e => setForm(f => ({ ...f, parentPhone: e.target.value }))} required />
             </div>
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Class / <span className="font-tamil">வகுப்பு</span></label>

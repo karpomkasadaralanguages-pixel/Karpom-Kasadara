@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import api from '../api/axios';
 import useAuthStore from '../store/authStore';
 import { CLASS_LEVELS } from './AdminUsersPage';
+import { formatIST } from '../utils/formatTime';
 
 const CATEGORIES = ['Alphabet', 'Grammar', 'Vocabulary', 'Sentences', 'Conversation', 'Culture'];
 const DIFFICULTIES = ['beginner', 'intermediate', 'advanced'];
@@ -325,7 +326,7 @@ function SubmitWorkModal({ item, onClose }) {
                     {submission.status === 'reviewed' ? '✅ Reviewed by your teacher' : '📤 Submitted — waiting for review'}
                   </div>
                   <div className="text-xs mt-1 opacity-80">
-                    {submission.fileName} · {new Date(submission.submittedAt).toLocaleString()}
+                    {submission.fileName} · {formatIST(submission.submittedAt)}
                   </div>
                   {submission.teacherComment && (
                     <div className="text-xs mt-2 pt-2 border-t border-current border-opacity-20">
@@ -438,7 +439,7 @@ function SubmissionsModal({ item, onClose }) {
                   {r.submission && (
                     <>
                       <p className="text-xs text-gray-400 mb-2">
-                        {r.submission.fileName} · {new Date(r.submission.submittedAt).toLocaleString()}
+                        {r.submission.fileName} · {formatIST(r.submission.submittedAt)}
                       </p>
                       <div className="flex gap-2 flex-wrap items-center">
                         <button onClick={() => handleDownload(r.submission.id)} className="btn-secondary text-xs py-1 px-2">

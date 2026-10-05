@@ -4,6 +4,7 @@ import * as pdfjsLib from 'pdfjs-dist';
 import { jsPDF } from 'jspdf';
 import api from '../api/axios';
 import useAuthStore from '../store/authStore';
+import { formatIST } from '../utils/formatTime';
 
 // Use local worker via Vite asset URL
 pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
@@ -547,7 +548,7 @@ function SubmitFromViewerModal({ contentId, title, pageCount, pdfDocRef, annotat
                     {submission.status === 'reviewed' ? '✅ Reviewed by your teacher' : '📤 Submitted — waiting for review'}
                   </div>
                   <div className="text-xs mt-1 opacity-80">
-                    {submission.fileName} · {new Date(submission.submittedAt).toLocaleString()}
+                    {submission.fileName} · {formatIST(submission.submittedAt)}
                   </div>
                   {submission.teacherComment && (
                     <div className="text-xs mt-2 pt-2 border-t border-current border-opacity-20">

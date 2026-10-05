@@ -5,7 +5,7 @@ const jwt = require('jsonwebtoken');
 const { v4: uuidv4 } = require('uuid');
 const { z } = require('zod');
 const prisma = require('../config/prisma');
-const { requireAuth } = require('../middleware/auth');
+const { requireAuth, requireRole } = require('../middleware/auth');
 const { sendInviteEmail, sendPasswordResetEmail } = require('../services/email');
 
 // ── RATE LIMITERS ─────────────────────────────────────────────────────────────
@@ -64,7 +64,13 @@ router.post('/login', async (req, res, next) => {
     const valid = await bcrypt.compare(password, user.passwordHash);
     if (!valid) return res.status(401).json({ error: { code: 'INVALID_CREDENTIALS', message: 'Invalid email or password.' } });
 
-    await prisma.user.update({ where: { id: user.id }, data: { lastLoginAt: new Date() } });
+    const now = new Date();
+    await prisma.user.update({ where: { id: user.id }, data: { lastLoginAt: now } });
+    // Keep a history row for the admin "Login Activity" view. Best-effort: a
+    // failure here must never stop someone from signing in.
+    prisma.loginEvent.create({ data: { userId: user.id, loggedInAt: now } }).catch(err => {
+      console.error('Failed to record login event:', err.message);
+    });
 
     let profiles = [];
     let activeProfileId = null;
@@ -93,6 +99,31 @@ router.post('/login', async (req, res, next) => {
         activeProfileId,
       }),
     });
+  } catch (err) {
+    if (err.name === 'ZodError') return res.status(400).json({ error: { code: 'VALIDATION', message: err.errors[0].message } });
+    next(err);
+  }
+});
+
+// ── GET /login-history — admin only: who signed in, and when ──────────────────
+router.get('/login-history', requireAuth, requireRole('admin'), async (req, res, next) => {
+  try {
+    const { limit, userId } = z.object({
+      limit: z.coerce.number().int().min(1).max(1000).default(300),
+      userId: z.string().uuid().optional(),
+    }).parse(req.query);
+
+    const events = await prisma.loginEvent.findMany({
+      where: userId ? { userId } : undefined,
+      orderBy: { loggedInAt: 'desc' },
+      take: limit,
+      select: {
+        id: true,
+        loggedInAt: true,
+        user: { select: { id: true, fullName: true, email: true, role: true, deletedAt: true } },
+      },
+    });
+    res.json({ events });
   } catch (err) {
     if (err.name === 'ZodError') return res.status(400).json({ error: { code: 'VALIDATION', message: err.errors[0].message } });
     next(err);
@@ -184,7 +215,7 @@ router.post('/register', async (req, res, next) => {
       email: z.string().email(),
       password: z.string().min(8),
       age: z.number().int().min(1).max(120),
-      parentPhone: z.string().regex(/^\d{1,18}$/, 'Parent phone number must be numeric, up to 18 digits.'),
+      parentPhone: z.string().trim().min(1, 'Please enter a parent phone number.').max(50, 'Parent phone number is too long (max 50 characters).'),
       classLevel: z.enum(['kg', 'class_1', 'class_2', 'class_3', 'class_4', 'class_5', 'class_6', 'class_7', 'class_8']).optional(),
     }).parse(req.body);
 

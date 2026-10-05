@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import api from '../api/axios';
 import useAuthStore from '../store/authStore';
+import { formatIST, formatISTDate } from '../utils/formatTime';
 
 export const CLASS_LEVELS = [
   { value: 'kg', label: 'KG' },
@@ -408,7 +409,7 @@ export function AdminUsersPage() {
               </div>
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Parent Phone Number</label>
-                <input type="tel" inputMode="numeric" pattern="[0-9]{1,18}" maxLength={18} className="input" placeholder="Phone number" value={createForm.parentPhone} onChange={e => setCreateForm(f => ({ ...f, parentPhone: e.target.value.replace(/\D/g, '').slice(0, 18) }))} />
+                <input type="text" maxLength={50} className="input" placeholder="e.g. +91 98765 43210" value={createForm.parentPhone} onChange={e => setCreateForm(f => ({ ...f, parentPhone: e.target.value }))} />
               </div>
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Class</label>
@@ -447,8 +448,8 @@ export function AdminUsersPage() {
             {editUser.role === 'student' && (
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Parent Phone Number</label>
-                <input type="tel" inputMode="numeric" pattern="[0-9]{1,18}" maxLength={18} className="input" placeholder="Phone number" value={editForm.parentPhone}
-                  onChange={e => setEditForm(f => ({ ...f, parentPhone: e.target.value.replace(/\D/g, '').slice(0, 18) }))} />
+                <input type="text" maxLength={50} className="input" placeholder="e.g. +91 98765 43210" value={editForm.parentPhone}
+                  onChange={e => setEditForm(f => ({ ...f, parentPhone: e.target.value }))} />
               </div>
             )}
             <div className="flex gap-3 pt-2">
@@ -843,7 +844,7 @@ export function TeacherStudentsPage() {
                     <div className="font-medium text-sm text-gray-900">{s.fullName}</div>
                     <div className="text-xs text-gray-500">{s.email}</div>
                     <div className="text-xs text-gray-400 mt-0.5">
-                      Last active: {s.lastLoginAt ? new Date(s.lastLoginAt).toLocaleDateString() : 'Never'}
+                      Last active: {s.lastLoginAt ? formatIST(s.lastLoginAt) : 'Never'}
                     </div>
                   </div>
                 </div>
@@ -886,7 +887,7 @@ export function TeacherStudentsPage() {
                         <div>
                           <div className="font-medium text-sm text-gray-900">{p.content?.title}</div>
                           <div className="text-xs text-gray-400 mt-0.5">
-                            {p.content?.category} · Last viewed: {new Date(p.lastAccessedAt).toLocaleDateString()}
+                            {p.content?.category} · Last viewed: {formatISTDate(p.lastAccessedAt)}
                           </div>
                         </div>
                         <span className={`text-xs px-2 py-0.5 rounded-full font-medium flex-shrink-0 ${
@@ -969,7 +970,7 @@ export function AdminAnnouncementsPage() {
               <div>
                 <div className="font-semibold text-gray-800 text-sm">{a.title}</div>
                 <p className="text-gray-600 text-sm mt-1">{a.body}</p>
-                <div className="text-xs text-gray-400 mt-2">{new Date(a.createdAt).toLocaleString()}</div>
+                <div className="text-xs text-gray-400 mt-2">{formatIST(a.createdAt)}</div>
               </div>
               <button onClick={() => handleDelete(a.id)} className="text-gray-400 hover:text-red-600 flex-shrink-0">🗑</button>
             </div>
@@ -1107,8 +1108,8 @@ export function ProfilePage() {
             {user?.role === 'student' && (
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Parent Phone Number</label>
-                <input type="tel" inputMode="numeric" pattern="[0-9]{1,18}" maxLength={18} className="input" placeholder="Phone number" value={form.parentPhone}
-                  onChange={e => setForm(f => ({ ...f, parentPhone: e.target.value.replace(/\D/g, '').slice(0, 18) }))} />
+                <input type="text" maxLength={50} className="input" placeholder="e.g. +91 98765 43210" value={form.parentPhone}
+                  onChange={e => setForm(f => ({ ...f, parentPhone: e.target.value }))} />
               </div>
             )}
             {msg && <div className="p-3 bg-green-50 border border-green-200 rounded-lg text-sm text-green-700">{msg}</div>}

@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import api from '../api/axios';
+import { formatIST } from '../utils/formatTime';
 
 export default function AdminInquiriesPage() {
   const [inquiries, setInquiries] = useState([]);
@@ -50,7 +51,7 @@ export default function AdminInquiriesPage() {
                   </div>
                   <p className="text-xs text-gray-500">{inq.email}{inq.phone ? ` · ${inq.phone}` : ''}</p>
                   <p className="text-gray-600 text-sm mt-2 whitespace-pre-wrap">{inq.message}</p>
-                  <div className="text-xs text-gray-400 mt-2">{new Date(inq.createdAt).toLocaleString()}</div>
+                  <div className="text-xs text-gray-400 mt-2">{formatIST(inq.createdAt)}</div>
                 </div>
                 <div className="flex flex-col gap-1 flex-shrink-0">
                   <button onClick={() => toggleRead(inq)} className="text-xs text-gray-500 hover:text-primary-700 px-2 py-1 rounded hover:bg-primary-50">

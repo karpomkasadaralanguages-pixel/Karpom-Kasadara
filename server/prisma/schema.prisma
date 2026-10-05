@@ -96,8 +96,24 @@ model User {
   // For teacher/admin accounts this is simply empty.
   studentProfiles  StudentProfile[]   @relation("AccountProfiles")
   reviewedSubmissions Submission[]    @relation("SubmissionReviewedBy")
+  loginEvents      LoginEvent[]
 
   @@map("users")
+}
+
+// One row per successful sign-in, so admins can see who logged in and when
+// (User.lastLoginAt only keeps the most recent one). Timestamps are stored in
+// UTC; the admin UI renders them in India Standard Time.
+model LoginEvent {
+  id         String   @id @default(uuid())
+  userId     String   @map("user_id")
+  loggedInAt DateTime @default(now()) @map("logged_in_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([loggedInAt])
+  @@index([userId])
+  @@map("login_events")
 }
 
 // A single child under a student account's login. A student account (User with

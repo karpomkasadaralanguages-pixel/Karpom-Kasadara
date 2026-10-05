@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import useAuthStore from '../store/authStore';
 import api from '../api/axios';
+import { formatISTDate } from '../utils/formatTime';
 
 function StatCard({ icon, value, label, tamil }) {
   return (
@@ -154,7 +155,7 @@ export default function DashboardPage() {
                   <div className="flex-1 min-w-0">
                     <div className="font-medium text-sm text-gray-900 truncate">{p.content?.title}</div>
                     <div className="text-xs text-gray-400 mt-0.5">
-                      {p.content?.category} · Last viewed: {new Date(p.lastAccessedAt).toLocaleDateString()}
+                      {p.content?.category} · Last viewed: {formatISTDate(p.lastAccessedAt)}
                     </div>
                   </div>
                   <div className="flex items-center gap-2 flex-shrink-0">
@@ -218,7 +219,7 @@ export default function DashboardPage() {
               <div key={a.id} className="card border-l-4 border-primary-600">
                 <div className="font-semibold text-gray-800 text-sm">{a.title}</div>
                 <p className="text-gray-600 text-sm mt-1">{a.body}</p>
-                <div className="text-xs text-gray-400 mt-2">{new Date(a.createdAt).toLocaleDateString()}</div>
+                <div className="text-xs text-gray-400 mt-2">{formatISTDate(a.createdAt)}</div>
               </div>
             ))}
           </div>

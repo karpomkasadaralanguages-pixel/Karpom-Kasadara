@@ -13,6 +13,7 @@ import ForgotPasswordPage from './pages/ForgotPasswordPage';
 import ResetPasswordPage from './pages/ResetPasswordPage';
 import InquiryPage from './pages/InquiryPage';
 import AdminInquiriesPage from './pages/AdminInquiriesPage';
+import AdminLoginActivityPage from './pages/AdminLoginActivityPage';
 import DashboardPage from './pages/DashboardPage';
 import ContentLibraryPage from './pages/ContentLibraryPage';
 import ViewerPage from './pages/ViewerPage';
@@ -100,6 +101,9 @@ export default function App() {
           } />
           <Route path="admin/inquiries" element={
             <RequireRole roles={['admin']}><AdminInquiriesPage /></RequireRole>
+          } />
+          <Route path="admin/login-activity" element={
+            <RequireRole roles={['admin']}><AdminLoginActivityPage /></RequireRole>
           } />
         </Route>
 
