@@ -40,7 +40,7 @@ router.get('/', requireAuth, async (req, res, next) => {
     const and = []; // extra conditions combined with AND (teacher visibility, search)
 
     if (req.user.role === 'student') {
-      if (!req.user.profileId) return res.json({ content: [] });
+      if (!req.user.profileId) return res.json({ content: [], total: 0, page: 1, pageSize: 20, totalPages: 1 });
       const assignments = await prisma.contentAssignment.findMany({ where: { studentId: req.user.profileId }, select: { contentId: true } });
       where.id = { in: assignments.map(a => a.contentId) };
       // Teaching guides are never visible to students, even if directly assigned

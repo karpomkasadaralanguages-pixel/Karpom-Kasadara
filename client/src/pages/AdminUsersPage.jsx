@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import Pagination from '../components/Pagination';
 import api from '../api/axios';
 import useAuthStore from '../store/authStore';
 import { formatIST, formatISTDate } from '../utils/formatTime';
@@ -37,6 +38,13 @@ export function AdminUsersPage() {
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState('');
   const [search, setSearch] = useState('');
+  const [debouncedSearch, setDebouncedSearch] = useState('');
+  const [page, setPage] = useState(1);
+  const [totalPages, setTotalPages] = useState(1);
+  const [total, setTotal] = useState(0);
+  const [counts, setCounts] = useState({ all: 0, admin: 0, teacher: 0, student: 0 });
+  const [allTeachers, setAllTeachers] = useState([]); // full lists for the transfer / assign pickers
+  const [allStudents, setAllStudents] = useState([]);
 
   // Modal states
   const [showCreate, setShowCreate] = useState(false);
@@ -66,13 +74,34 @@ export function AdminUsersPage() {
   const [error, setError] = useState('');
   const [successMsg, setSuccessMsg] = useState('');
 
-  useEffect(() => { load(); }, []);
-
   const load = async () => {
-    const { data } = await api.get('/users');
-    setUsers(data.users);
-    setLoading(false);
+    try {
+      const params = new URLSearchParams({ page: String(page), pageSize: '20' });
+      if (filter) params.append('role', filter);
+      if (debouncedSearch) params.append('search', debouncedSearch);
+      const [list, teachersRes, studentsRes] = await Promise.all([
+        api.get(`/users?${params}`),
+        api.get('/users?role=teacher'),
+        api.get('/users?role=student'),
+      ]);
+      const d = list.data;
+      setUsers(d.users);
+      setTotal(d.total);
+      setTotalPages(d.totalPages);
+      setCounts(d.counts);
+      setAllTeachers(teachersRes.data.users);
+      setAllStudents(studentsRes.data.users);
+      if (d.page > d.totalPages) setPage(d.totalPages); // last item of last page was removed
+    } finally { setLoading(false); }
   };
+
+  // Search the whole user list (server-side) shortly after typing stops.
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedSearch(search.trim()), 300);
+    return () => clearTimeout(t);
+  }, [search]);
+  useEffect(() => { setPage(1); }, [debouncedSearch, filter]);
+  useEffect(() => { load(); }, [page, debouncedSearch, filter]);
 
   const showSuccess = msg => {
     setSuccessMsg(msg);
@@ -238,7 +267,7 @@ export function AdminUsersPage() {
   // Student accounts can hold several child profiles — flatten to a
   // per-profile picker since assignment (and all student-scoped data) is
   // keyed by profile, not by account.
-  const studentProfileOptions = users
+  const studentProfileOptions = allStudents
     .filter(u => u.role === 'student')
     .flatMap(u => (u.profiles && u.profiles.length ? u.profiles : [{ id: u.id, fullName: u.fullName }])
       .map(p => ({ ...p, accountEmail: u.email })));
@@ -259,8 +288,8 @@ export function AdminUsersPage() {
   const handleDelete = async u => {
     if (!confirm(`Delete ${u.fullName}? This cannot be undone.`)) return;
     await api.delete(`/users/${u.id}`);
-    setUsers(us => us.filter(x => x.id !== u.id));
     showSuccess('User deleted.');
+    load();
   };
 
   // ── SUSPEND ────────────────────────────────────────────────────────────────
@@ -270,12 +299,8 @@ export function AdminUsersPage() {
     setUsers(us => us.map(x => x.id === u.id ? { ...x, status: newStatus } : x));
   };
 
-  const teachers = users.filter(u => u.role === 'teacher');
-  const filtered = users.filter(u => {
-    if (filter && u.role !== filter) return false;
-    if (search && !u.fullName.toLowerCase().includes(search.toLowerCase()) && !u.email.toLowerCase().includes(search.toLowerCase())) return false;
-    return true;
-  });
+  const teachers = allTeachers;
+  const filtered = users; // already filtered + paged by the server
 
   const roleBadge = {
     admin: 'bg-purple-100 text-purple-800',
@@ -307,7 +332,7 @@ export function AdminUsersPage() {
           {['', 'admin', 'teacher', 'student'].map(r => (
             <button key={r} onClick={() => setFilter(r)}
               className={`px-3 py-1.5 rounded-full text-sm font-medium transition-colors ${filter === r ? 'bg-primary-800 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}>
-              {r || 'All'} {r ? `(${users.filter(u => u.role === r).length})` : `(${users.length})`}
+              {r || 'All'} ({counts[r || 'all'] ?? 0})
             </button>
           ))}
         </div>
@@ -376,6 +401,7 @@ export function AdminUsersPage() {
           )}
         </div>
       )}
+      {!loading && <Pagination page={page} totalPages={totalPages} total={total} onChange={setPage} noun="users" />}
 
       {/* ── CREATE MODAL ─────────────────────────────────────────────────────── */}
       {showCreate && (

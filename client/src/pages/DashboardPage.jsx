@@ -58,32 +58,31 @@ export default function DashboardPage() {
     try {
       if (user.role === 'student') {
         const [content, prog] = await Promise.all([
-          api.get('/content'),
+          api.get('/content?page=1&pageSize=1'),
           api.get(`/users/${user.id}/progress`),
         ]);
         const progData = prog.data.progress;
         setProgress(progData);
         setStats({
-          lessons: content.data.content.length,
+          lessons: content.data.total,
           completed: progData.filter(p => p.percentComplete >= 100).length,
           inProgress: progData.filter(p => p.percentComplete > 0 && p.percentComplete < 100).length,
         });
       } else if (user.role === 'teacher') {
         const [content, students] = await Promise.all([
-          api.get('/content'),
+          api.get('/content?page=1&pageSize=1'),
           api.get(`/users/${user.id}/students`),
         ]);
-        setStats({ content: content.data.content.length, students: students.data.students.length });
+        setStats({ content: content.data.total, students: students.data.students.length });
       } else if (user.role === 'admin') {
         const [content, users] = await Promise.all([
-          api.get('/content'),
-          api.get('/users'),
+          api.get('/content?page=1&pageSize=1'),
+          api.get('/users?page=1&pageSize=1'),
         ]);
-        const userList = users.data.users;
         setStats({
-          content: content.data.content.length,
-          teachers: userList.filter(u => u.role === 'teacher').length,
-          students: userList.filter(u => u.role === 'student').length,
+          content: content.data.total,
+          teachers: users.data.counts.teacher,
+          students: users.data.counts.student,
         });
       }
     } catch {}

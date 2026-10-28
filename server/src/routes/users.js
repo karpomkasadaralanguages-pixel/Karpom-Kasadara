@@ -27,9 +27,23 @@ function generateReadablePassword(length = 10) {
 // ── GET /users — admin only ───────────────────────────────────────────────────
 router.get('/', requireAuth, requireRole('admin'), async (req, res, next) => {
   try {
-    const { role, cursor, limit = 20 } = req.query;
-    const where = { deletedAt: null };
+    const { role, cursor, limit, search, page, pageSize = 20 } = req.query;
+    const base = { deletedAt: null };
+    // Search runs across ALL accounts (name or email), not just one page.
+    const q = typeof search === 'string' ? search.trim().slice(0, 100) : '';
+    if (q) base.OR = [
+      { fullName: { contains: q, mode: 'insensitive' } },
+      { email: { contains: q, mode: 'insensitive' } },
+    ];
+    const where = { ...base };
     if (role) where.role = role;
+
+    // Numbered pages (?page=1&pageSize=20). Without `page`, return everyone
+    // (up to `limit`, default 1000) so lookups such as the teacher list and
+    // dashboard counts are never silently cut off.
+    const paged = page !== undefined;
+    const size = Math.min(100, Math.max(1, parseInt(pageSize) || 20));
+    const pageNo = Math.max(1, parseInt(page) || 1);
 
     const users = await prisma.user.findMany({
       where,
@@ -37,10 +51,24 @@ router.get('/', requireAuth, requireRole('admin'), async (req, res, next) => {
         id: true, role: true, fullName: true, email: true, status: true, createdAt: true, lastLoginAt: true, parentPhone: true,
         studentProfiles: { where: { deletedAt: null }, orderBy: { createdAt: 'asc' }, select: { id: true, fullName: true, age: true, classLevel: true } },
       },
-      orderBy: { createdAt: 'desc' },
-      take: parseInt(limit),
-      ...(cursor && { cursor: { id: cursor }, skip: 1 }),
+      orderBy: [{ createdAt: 'desc' }, { id: 'asc' }],
+      ...(paged
+        ? { skip: (pageNo - 1) * size, take: size }
+        : { take: Math.min(1000, parseInt(limit) || 1000), ...(cursor && { cursor: { id: cursor }, skip: 1 }) }),
     });
+
+    if (paged) {
+      const [total, groups] = await Promise.all([
+        prisma.user.count({ where }),
+        prisma.user.groupBy({ by: ['role'], where: base, _count: { _all: true } }),
+      ]);
+      const counts = { all: 0, admin: 0, teacher: 0, student: 0 };
+      groups.forEach(g => { counts[g.role] = g._count._all; counts.all += g._count._all; });
+      return res.json({
+        users: users.map(({ studentProfiles, ...u }) => ({ ...u, profiles: studentProfiles })),
+        total, page: pageNo, pageSize: size, totalPages: Math.max(1, Math.ceil(total / size)), counts,
+      });
+    }
 
     // Keep the response shape close to before (profiles is additive), and map
     // studentProfiles -> profiles for a clearer name on the wire.
