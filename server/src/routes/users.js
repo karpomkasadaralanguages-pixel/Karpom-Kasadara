@@ -250,7 +250,7 @@ router.delete('/:id', requireAuth, requireRole('admin'), async (req, res, next) 
       return res.status(400).json({ error: { code: 'CANNOT_DELETE_SELF', message: 'You cannot delete your own account.' } });
     }
 
-    const target = await prisma.user.findUnique({ where: { id: req.params.id }, select: { role: true } });
+    const target = await prisma.user.findUnique({ where: { id: req.params.id }, select: { role: true, email: true } });
     if (!target) return res.status(404).json({ error: { code: 'NOT_FOUND', message: 'User not found.' } });
 
     // Transfer content to admin if teacher
@@ -259,7 +259,13 @@ router.delete('/:id', requireAuth, requireRole('admin'), async (req, res, next) 
       await prisma.content.updateMany({ where: { uploadedById: req.params.id }, data: { uploadedById: admin.id } });
     }
 
-    await prisma.user.update({ where: { id: req.params.id }, data: { deletedAt: new Date() } });
+    // Soft delete. The email column is unique, so rename the deleted row's email
+    // (original kept inside it) to free the address for a new account.
+    await prisma.user.update({
+      where: { id: req.params.id },
+      data: { deletedAt: new Date(), email: `deleted-${req.params.id}__${target.email}` },
+    });
+    await prisma.refreshToken.deleteMany({ where: { userId: req.params.id } }).catch(() => {});
     res.json({ message: 'User deleted successfully.' });
   } catch (err) { next(err); }
 });
