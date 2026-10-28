@@ -35,8 +35,9 @@ const submissionUpload = multer({
 // ── GET /content — list content visible to user ───────────────────────────────
 router.get('/', requireAuth, async (req, res, next) => {
   try {
-    const { category, difficulty, classLevel, contentType, sort = 'recent', cursor, limit = 20 } = req.query;
+    const { category, difficulty, classLevel, contentType, sort = 'recent', cursor, limit = 20, search, page, pageSize = 20 } = req.query;
     const where = { deletedAt: null, status: 'ready' };
+    const and = []; // extra conditions combined with AND (teacher visibility, search)
 
     if (req.user.role === 'student') {
       if (!req.user.profileId) return res.json({ content: [] });
@@ -46,12 +47,22 @@ router.get('/', requireAuth, async (req, res, next) => {
       where.contentType = { not: 'teaching_guide' };
     } else if (req.user.role === 'teacher') {
       const shares = await prisma.contentTeacherShare.findMany({ where: { teacherId: req.user.id }, select: { contentId: true } });
-      where.OR = [
+      and.push({ OR: [
         { uploadedById: req.user.id },
         { isShared: true },
         { id: { in: shares.map(s => s.contentId) } }
-      ];
+      ] });
     }
+
+    // Search runs across everything the user can see (not just one page of results).
+    const q = typeof search === 'string' ? search.trim().slice(0, 100) : '';
+    if (q) {
+      and.push({ OR: [
+        { title: { contains: q, mode: 'insensitive' } },
+        { category: { contains: q, mode: 'insensitive' } },
+      ] });
+    }
+    if (and.length) where.AND = and;
 
     if (category) where.category = category;
     if (difficulty) where.difficulty = difficulty;
@@ -63,6 +74,12 @@ router.get('/', requireAuth, async (req, res, next) => {
 
     const orderBy = sort === 'alpha' ? { title: 'asc' } : { createdAt: 'desc' };
 
+    // Numbered pagination (?page=1&pageSize=20). Falls back to the older
+    // cursor/limit behaviour when `page` isn't supplied.
+    const paged = page !== undefined;
+    const size = Math.min(100, Math.max(1, parseInt(pageSize) || 20));
+    const pageNo = Math.max(1, parseInt(page) || 1);
+
     const content = await prisma.content.findMany({
       where,
       select: {
@@ -72,11 +89,16 @@ router.get('/', requireAuth, async (req, res, next) => {
         status: true, createdAt: true,
         uploadedBy: { select: { id: true, fullName: true } }
       },
-      orderBy,
-      take: parseInt(limit),
-      ...(cursor && { cursor: { id: cursor }, skip: 1 }),
+      orderBy: [orderBy, { id: 'asc' }],
+      ...(paged
+        ? { skip: (pageNo - 1) * size, take: size }
+        : { take: parseInt(limit), ...(cursor && { cursor: { id: cursor }, skip: 1 }) }),
     });
 
+    if (paged) {
+      const total = await prisma.content.count({ where });
+      return res.json({ content, total, page: pageNo, pageSize: size, totalPages: Math.max(1, Math.ceil(total / size)) });
+    }
     res.json({ content });
   } catch (err) { next(err); }
 });

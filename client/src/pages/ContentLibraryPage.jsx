@@ -651,6 +651,10 @@ export default function ContentLibraryPage() {
   const [filterClass, setFilterClass] = useState('');
   const [filterType, setFilterType] = useState('');
   const [search, setSearch] = useState('');
+  const [debouncedSearch, setDebouncedSearch] = useState('');
+  const [page, setPage] = useState(1);
+  const [totalPages, setTotalPages] = useState(1);
+  const [total, setTotal] = useState(0);
   const [showUpload, setShowUpload] = useState(false);
   const [shareItem, setShareItem] = useState(null);
   const [assignItem, setAssignItem] = useState(null);
@@ -660,22 +664,36 @@ export default function ContentLibraryPage() {
 
   const load = async () => {
     try {
-      const params = new URLSearchParams({ sort });
+      const params = new URLSearchParams({ sort, page: String(page), pageSize: '20' });
+      if (debouncedSearch) params.append('search', debouncedSearch);
       if (filterCategory) params.append('category', filterCategory);
       if (filterDifficulty) params.append('difficulty', filterDifficulty);
       if (filterClass) params.append('classLevel', filterClass);
       if (filterType) params.append('contentType', filterType);
       const { data } = await api.get(`/content?${params}`);
       setContent(data.content);
+      setTotal(data.total ?? data.content.length);
+      setTotalPages(data.totalPages ?? 1);
+      // If the last item of the last page was removed, step back a page.
+      if (data.page > data.totalPages) setPage(data.totalPages);
     } catch {} finally { setLoading(false); }
   };
 
-  useEffect(() => { load(); }, [sort, filterCategory, filterDifficulty, filterClass, filterType]);
+  // Wait briefly after typing, then search the whole library (server-side).
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedSearch(search.trim()), 300);
+    return () => clearTimeout(t);
+  }, [search]);
+
+  // Any change to the search or filters goes back to page 1.
+  useEffect(() => { setPage(1); }, [debouncedSearch, sort, filterCategory, filterDifficulty, filterClass, filterType]);
+
+  useEffect(() => { load(); }, [page, debouncedSearch, sort, filterCategory, filterDifficulty, filterClass, filterType]);
 
   const handleDelete = async id => {
     if (!confirm('Delete this content? This cannot be undone.')) return;
     await api.delete(`/content/${id}`);
-    setContent(c => c.filter(i => i.id !== id));
+    load();
   };
 
   const handleShare = async item => {
@@ -683,9 +701,16 @@ export default function ContentLibraryPage() {
     setContent(c => c.map(i => i.id === item.id ? { ...i, isShared: !i.isShared } : i));
   };
 
-  const filtered = content.filter(c =>
-    !search || c.title.toLowerCase().includes(search.toLowerCase())
-  );
+  const filtered = content;
+
+  // Page numbers to show: first, last, and a window around the current page.
+  const pageNumbers = (() => {
+    const nums = new Set([1, totalPages, page - 1, page, page + 1]);
+    const list = [...nums].filter(n => n >= 1 && n <= totalPages).sort((a, b) => a - b);
+    const out = [];
+    list.forEach((n, i) => { if (i && n - list[i - 1] > 1) out.push('…'); out.push(n); });
+    return out;
+  })();
 
   return (
     <div className="p-6 max-w-5xl mx-auto">
@@ -755,6 +780,24 @@ export default function ContentLibraryPage() {
               onOpenSubmissions={setSubmissionsItem}
             />
           ))}
+        </div>
+      )}
+
+      {/* Pagination */}
+      {!loading && totalPages > 1 && (
+        <div className="mt-6 flex flex-col items-center gap-2">
+          <div className="flex flex-wrap items-center justify-center gap-1">
+            <button onClick={() => setPage(p => Math.max(1, p - 1))} disabled={page <= 1}
+              className="px-3 py-1.5 text-sm rounded border border-gray-200 bg-white disabled:opacity-40">‹ Prev</button>
+            {pageNumbers.map((n, i) => n === '…'
+              ? <span key={`gap-${i}`} className="px-2 text-gray-400">…</span>
+              : <button key={n} onClick={() => setPage(n)}
+                  className={`min-w-[36px] px-2 py-1.5 text-sm rounded border ${n === page ? 'bg-primary-700 text-white border-primary-700' : 'bg-white border-gray-200 text-gray-700 hover:bg-gray-50'}`}>{n}</button>
+            )}
+            <button onClick={() => setPage(p => Math.min(totalPages, p + 1))} disabled={page >= totalPages}
+              className="px-3 py-1.5 text-sm rounded border border-gray-200 bg-white disabled:opacity-40">Next ›</button>
+          </div>
+          <p className="text-xs text-gray-400">Page {page} of {totalPages} · {total} items</p>
         </div>
       )}
 

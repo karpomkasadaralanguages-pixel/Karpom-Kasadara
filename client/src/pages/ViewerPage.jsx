@@ -27,6 +27,7 @@ export default function ViewerPage() {
   const annotationCanvasRef = useRef(null);
   const pdfDocRef = useRef(null);
   const refreshIntervalRef = useRef(null);
+  const renderTaskRef = useRef(null);
   const isDrawingRef = useRef(false);
   const lastPointRef = useRef(null);
 
@@ -120,7 +121,13 @@ export default function ViewerPage() {
     canvas.height = viewport.height;
 
     const ctx = canvas.getContext('2d');
-    await page.render({ canvasContext: ctx, viewport }).promise;
+    try { renderTaskRef.current?.cancel(); } catch {}
+    const task = page.render({ canvasContext: ctx, viewport });
+    renderTaskRef.current = task;
+    try { await task.promise; } catch (err) {
+      if (err?.name === 'RenderingCancelledException') return; // a newer render took over
+      throw err;
+    }
 
     // Reset the annotation canvas for the new page, then restore any marks
     // saved earlier for this page (if the student already wrote on it).
@@ -158,7 +165,18 @@ export default function ViewerPage() {
         // Use PDF.js page count as source of truth
         const pc = pdf.numPages || meta.pageCount || 0;
         setPageCount(pc);
-        if (!cancelled) { await renderPage(1); setLoading(false); }
+        if (!cancelled) {
+          // Fit the first page to the screen width (phones) so it isn't cut off.
+          try {
+            const p1 = await pdf.getPage(1);
+            const natural = p1.getViewport({ scale: 1 }).width;
+            const fit = (Math.min(window.innerWidth, 1200) - 32) / natural;
+            if (fit > 0 && fit < 1) setZoom(Math.max(0.3, Math.round(fit * 100) / 100));
+          } catch {}
+          // The canvases only exist once loading is false; the effect below
+          // draws the page as soon as they are mounted.
+          setLoading(false);
+        }
 
         // Stream URL is stable — no refresh needed
       } catch (err) {
@@ -168,7 +186,7 @@ export default function ViewerPage() {
     return () => { cancelled = true; clearInterval(refreshIntervalRef.current); };
   }, [id]);
 
-  useEffect(() => { if (!loading) renderPage(pageNum); }, [pageNum, zoom]);
+  useEffect(() => { if (!loading) renderPage(pageNum); }, [pageNum, zoom, loading]);
 
   // ── NAVIGATION ─────────────────────────────────────────────────────────────
   const goTo = n => {
@@ -382,7 +400,7 @@ export default function ViewerPage() {
       </div>
 
       {/* ── CANVAS AREA ─────────────────────────────────────────────────────── */}
-      <div className="flex-1 overflow-auto flex items-start justify-center py-6 px-4 bg-gray-900">
+      <div className="flex-1 overflow-auto flex items-start py-6 px-4 bg-gray-900" style={{ WebkitOverflowScrolling: 'touch' }}>
         {loading ? (
           <div className="flex flex-col items-center justify-center mt-20 text-gray-400">
             <div className="w-10 h-10 border-4 border-primary-500 border-t-transparent rounded-full animate-spin mb-4" />
@@ -390,7 +408,7 @@ export default function ViewerPage() {
             <p className="text-sm">Loading document…</p>
           </div>
         ) : (
-          <div className="relative shadow-2xl" style={{ cursor: cursor[tool] }}>
+          <div className="relative shadow-2xl flex-shrink-0 mx-auto" style={{ cursor: cursor[tool] }}>
             {/* Watermark overlay */}
             <div className="absolute inset-0 pointer-events-none z-10 flex items-center justify-center opacity-5">
               <span className="text-white text-6xl font-bold rotate-[-30deg] select-none">{user?.email}</span>
