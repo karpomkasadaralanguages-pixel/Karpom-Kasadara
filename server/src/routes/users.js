@@ -309,7 +309,7 @@ router.get('/:id/students', requireAuth, async (req, res, next) => {
     }
 
     const relations = await prisma.teacherStudent.findMany({
-      where: { teacherId: req.params.id },
+      where: { teacherId: req.params.id, student: { deletedAt: null, account: { deletedAt: null } } },
       include: {
         student: {
           select: {
@@ -340,12 +340,17 @@ router.post('/:id/students', requireAuth, async (req, res, next) => {
   try {
     if (req.user.role === 'student') return res.status(403).json({ error: { code: 'FORBIDDEN', message: 'Access denied.' } });
 
+    if (req.user.role === 'teacher' && req.user.id !== req.params.id) {
+      return res.status(403).json({ error: { code: 'FORBIDDEN', message: 'Access denied.' } });
+    }
+
     const { studentId } = z.object({ studentId: z.string().uuid() }).parse(req.body);
 
     await prisma.teacherStudent.create({ data: { teacherId: req.params.id, studentId } });
     res.status(201).json({ message: 'Student assigned to teacher.' });
   } catch (err) {
     if (err.name === 'ZodError') return res.status(400).json({ error: { code: 'VALIDATION', message: err.errors[0].message } });
+    if (err.code === 'P2002') return res.status(409).json({ error: { code: 'ALREADY_ASSIGNED', message: 'This student is already assigned to this teacher.' } });
     next(err);
   }
 });
@@ -354,9 +359,40 @@ router.post('/:id/students', requireAuth, async (req, res, next) => {
 router.delete('/:id/students/:sid', requireAuth, async (req, res, next) => {
   try {
     if (req.user.role === 'student') return res.status(403).json({ error: { code: 'FORBIDDEN', message: 'Access denied.' } });
+    if (req.user.role === 'teacher' && req.user.id !== req.params.id) {
+      return res.status(403).json({ error: { code: 'FORBIDDEN', message: 'Access denied.' } });
+    }
     await prisma.teacherStudent.deleteMany({ where: { teacherId: req.params.id, studentId: req.params.sid } });
     res.json({ message: 'Student removed from teacher.' });
   } catch (err) { next(err); }
+});
+
+// ── PATCH /users/:id/students/:sid — edit an assigned student's details ───────
+// :id is the teacher, :sid a StudentProfile id. A teacher can only edit their
+// own assigned students; an admin can edit any teacher's assigned students.
+router.patch('/:id/students/:sid', requireAuth, async (req, res, next) => {
+  try {
+    if (req.user.role === 'student' || (req.user.role === 'teacher' && req.user.id !== req.params.id)) {
+      return res.status(403).json({ error: { code: 'FORBIDDEN', message: 'Access denied.' } });
+    }
+    const relation = await prisma.teacherStudent.findFirst({ where: { teacherId: req.params.id, studentId: req.params.sid } });
+    if (!relation) return res.status(404).json({ error: { code: 'NOT_FOUND', message: 'This student is not assigned to this teacher.' } });
+
+    const data = z.object({
+      fullName: z.string().trim().min(2).max(255).optional(),
+      age: z.union([z.number().int().min(1).max(120), z.literal(''), z.null()]).optional()
+        .transform(v => (v === '' || v === null ? undefined : v)),
+      classLevel: z.union([CLASS_LEVEL_ENUM, z.literal(''), z.null()]).optional()
+        .transform(v => (v === '' || v === null ? null : v)),
+    }).parse(req.body);
+    Object.keys(data).forEach(k => data[k] === undefined && delete data[k]);
+
+    const profile = await prisma.studentProfile.update({ where: { id: req.params.sid }, data });
+    res.json({ profile });
+  } catch (err) {
+    if (err.name === 'ZodError') return res.status(400).json({ error: { code: 'VALIDATION', message: err.errors[0].message } });
+    next(err);
+  }
 });
 
 // ── GET /users/:id/progress — :id is a StudentProfile id ──────────────────────

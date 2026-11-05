@@ -8,6 +8,7 @@ const NAV = {
     { to: '/dashboard',           label: 'Dashboard',       tamil: 'முகப்பு',       icon: '⊞' },
     { to: '/content',             label: 'Content Library', tamil: 'உள்ளடக்கம்',    icon: '📚' },
     { to: '/admin/users',         label: 'Users',           tamil: 'பயனர்கள்',      icon: '👥' },
+    { to: '/teacher/students',    label: "Teachers' Students", tamil: 'மாணவர்கள்',   icon: '🎓' },
     { to: '/admin/announcements', label: 'Announcements',   tamil: 'அறிவிப்புகள்',  icon: '📢' },
     { to: '/admin/inquiries',     label: 'Inquiries',       tamil: 'விசாரணைகள்',    icon: '✉️' },
     { to: '/admin/login-activity', label: 'Login Activity', tamil: 'உள்நுழைவுகள்',  icon: '🕒' },
