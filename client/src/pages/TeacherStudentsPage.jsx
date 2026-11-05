@@ -7,6 +7,11 @@ import { CLASS_LEVELS } from './AdminUsersPage';
 import { formatIST, formatISTDate } from '../utils/formatTime';
 
 const PAGE_SIZE = 20;
+const SOURCE_LABELS = {
+  uploaded: { text: 'Uploaded by them', cls: 'bg-blue-100 text-blue-800' },
+  shared: { text: 'Shared with them', cls: 'bg-green-100 text-green-800' },
+  everyone: { text: 'Shared with all teachers', cls: 'bg-gray-100 text-gray-700' },
+};
 const classLabel = v => CLASS_LEVELS.find(c => c.value === v)?.label || '';
 
 // Teachers see and manage their own students; admins pick any teacher
@@ -36,6 +41,20 @@ export default function TeacherStudentsPage() {
   const [saving, setSaving] = useState(false);
   const [editError, setEditError] = useState('');
 
+  // Content tab
+  const tab = searchParams.get('tab') === 'content' ? 'content' : 'students';
+  const setTab = t => {
+    const next = new URLSearchParams(searchParams);
+    if (t === 'content') next.set('tab', 'content'); else next.delete('tab');
+    setSearchParams(next);
+  };
+  const [contentItems, setContentItems] = useState([]);
+  const [contentLoading, setContentLoading] = useState(false);
+  const [contentError, setContentError] = useState('');
+  const [contentSource, setContentSource] = useState('');
+  const [contentSearch, setContentSearch] = useState('');
+  const [contentPage, setContentPage] = useState(1);
+
   const [mode, setMode] = useState('existing'); // 'existing' | 'invite' (invite is teacher-only)
   const [allStudents, setAllStudents] = useState([]);
   const [addStudentId, setAddStudentId] = useState('');
@@ -64,6 +83,30 @@ export default function TeacherStudentsPage() {
     } finally { setLoading(false); }
   };
   useEffect(() => { setPage(1); setSearch(''); load(); }, [teacherId]);
+
+  useEffect(() => {
+    if (!teacherId || tab !== 'content') return;
+    setContentLoading(true); setContentError('');
+    api.get(`/users/${teacherId}/content`)
+      .then(({ data }) => setContentItems(data.content))
+      .catch(err => setContentError(err.response?.data?.error?.message || 'Could not load content.'))
+      .finally(() => setContentLoading(false));
+  }, [teacherId, tab]);
+  useEffect(() => { setContentPage(1); }, [contentSource, contentSearch, teacherId]);
+
+  const contentCounts = useMemo(() => {
+    const c = { all: contentItems.length, uploaded: 0, shared: 0, everyone: 0 };
+    contentItems.forEach(i => { c[i.source]++; });
+    return c;
+  }, [contentItems]);
+  const filteredContent = useMemo(() => {
+    const q = contentSearch.trim().toLowerCase();
+    return contentItems.filter(i =>
+      (!contentSource || i.source === contentSource) &&
+      (!q || i.title.toLowerCase().includes(q) || i.category.toLowerCase().includes(q)));
+  }, [contentItems, contentSource, contentSearch]);
+  const contentTotalPages = Math.max(1, Math.ceil(filteredContent.length / PAGE_SIZE));
+  const visibleContent = filteredContent.slice((contentPage - 1) * PAGE_SIZE, contentPage * PAGE_SIZE);
 
   // Everyone who could be added (flattened to child profiles).
   const loadAllStudents = async () => {
@@ -187,6 +230,64 @@ export default function TeacherStudentsPage() {
         </div>
       ) : (
         <>
+          {/* Tabs */}
+          <div className="flex gap-2 mb-5 border-b border-gray-200">
+            {[['students', `🎓 Students (${students.length})`], ['content', '📚 Content']].map(([key, label]) => (
+              <button key={key} onClick={() => setTab(key)}
+                className={`px-4 py-2 text-sm font-medium -mb-px border-b-2 transition-colors ${tab === key ? 'border-primary-700 text-primary-800' : 'border-transparent text-gray-500 hover:text-gray-700'}`}>
+                {label}
+              </button>
+            ))}
+          </div>
+
+          {tab === 'content' ? (
+            <>
+              <p className="text-sm text-gray-500 mb-3">
+                {isAdmin ? `Content ${teacher?.fullName || 'this teacher'} can use` : 'Content you can use'}: what they uploaded, what was shared with them, and what is shared with all teachers.
+              </p>
+              <div className="flex flex-wrap gap-2 mb-3">
+                {[['', 'All'], ['uploaded', 'Uploaded'], ['shared', 'Shared with them'], ['everyone', 'Shared with all']].map(([key, label]) => (
+                  <button key={key} onClick={() => setContentSource(key)}
+                    className={`px-3 py-1.5 rounded-full text-sm font-medium transition-colors ${contentSource === key ? 'bg-primary-800 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}>
+                    {label} ({contentCounts[key || 'all']})
+                  </button>
+                ))}
+              </div>
+              <input type="search" className="input max-w-xs text-sm mb-4" placeholder="Search title or category..."
+                value={contentSearch} onChange={e => setContentSearch(e.target.value)} />
+              {contentError && <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700">{contentError}</div>}
+              {contentLoading ? (
+                <div className="text-center py-12 text-gray-400">Loading...</div>
+              ) : filteredContent.length === 0 ? (
+                <div className="text-center py-12 text-gray-400">
+                  <div className="text-4xl mb-3">📭</div>
+                  <p className="text-sm">{contentItems.length === 0 ? 'No content yet.' : 'No content matches.'}</p>
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  {visibleContent.map(c => (
+                    <div key={c.id} className="card">
+                      <div className="flex items-center justify-between gap-3 flex-wrap">
+                        <div className="min-w-0">
+                          <div className="font-medium text-sm text-gray-900">{c.title}</div>
+                          <div className="text-xs text-gray-500 mt-0.5">
+                            {[c.category, c.difficulty, classLabel(c.classLevel), c.pageCount ? `${c.pageCount} pages` : ''].filter(Boolean).join(' · ')}
+                          </div>
+                          <div className="text-xs text-gray-400 mt-0.5">
+                            By {c.uploadedBy?.fullName || 'unknown'} · {formatISTDate(c.createdAt)}
+                            {c.status !== 'ready' && ` · ${c.status}`}
+                          </div>
+                        </div>
+                        <span className={`text-xs px-2 py-0.5 rounded-full ${SOURCE_LABELS[c.source].cls}`}>{SOURCE_LABELS[c.source].text}</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+              <Pagination page={contentPage} totalPages={contentTotalPages} total={filteredContent.length} onChange={setContentPage} noun="items" />
+            </>
+          ) : (
+          <>
           {/* Add students */}
           <div className="card mb-6">
             {!isAdmin && (
@@ -283,6 +384,8 @@ export default function TeacherStudentsPage() {
             </div>
           )}
           <Pagination page={page} totalPages={totalPages} total={filtered.length} onChange={setPage} noun="students" />
+          </>
+          )}
         </>
       )}
 

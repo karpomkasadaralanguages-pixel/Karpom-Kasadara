@@ -367,6 +367,43 @@ router.delete('/:id/students/:sid', requireAuth, async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
+// ── GET /users/:id/content — everything a teacher has access to ───────────────
+// :id is the teacher. Three sources: content they uploaded, content an admin
+// shared with them directly, and content shared with all teachers. A teacher
+// can only look at their own; an admin can look at any teacher's.
+router.get('/:id/content', requireAuth, async (req, res, next) => {
+  try {
+    if (req.user.role === 'student' || (req.user.role === 'teacher' && req.user.id !== req.params.id)) {
+      return res.status(403).json({ error: { code: 'FORBIDDEN', message: 'Access denied.' } });
+    }
+    const select = {
+      id: true, title: true, category: true, difficulty: true, classLevel: true,
+      contentType: true, pageCount: true, status: true, createdAt: true,
+      uploadedBy: { select: { id: true, fullName: true } },
+    };
+    const live = { deletedAt: null };
+    const [uploaded, direct, everyone] = await Promise.all([
+      prisma.content.findMany({ where: { ...live, uploadedById: req.params.id }, select, orderBy: { createdAt: 'desc' } }),
+      prisma.contentTeacherShare.findMany({
+        where: { teacherId: req.params.id, content: live },
+        select: { createdAt: true, content: { select } },
+        orderBy: { createdAt: 'desc' },
+      }),
+      prisma.content.findMany({ where: { ...live, status: 'ready', isShared: true, uploadedById: { not: req.params.id } }, select, orderBy: { createdAt: 'desc' } }),
+    ]);
+
+    // One row per item; the most specific reason wins (uploaded > shared with them > shared with all).
+    const seen = new Set();
+    const items = [];
+    const add = (c, source) => { if (!seen.has(c.id)) { seen.add(c.id); items.push({ ...c, source }); } };
+    uploaded.forEach(c => add(c, 'uploaded'));
+    direct.forEach(d => add(d.content, 'shared'));
+    everyone.forEach(c => add(c, 'everyone'));
+
+    res.json({ content: items });
+  } catch (err) { next(err); }
+});
+
 // ── PATCH /users/:id/students/:sid — edit an assigned student's details ───────
 // :id is the teacher, :sid a StudentProfile id. A teacher can only edit their
 // own assigned students; an admin can edit any teacher's assigned students.
